@@ -20,8 +20,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Apply URL-autoload overlay to viewer.html
-        run: cp "$GITHUB_WORKSPACE/overlay/viewer.html" src/web/appjs/viewer/viewer.html
+      - name: Apply overlays (URL-autoload viewer.html, appshell CMake fix)
+        run: |
+          cp "$GITHUB_WORKSPACE/overlay/viewer.html" src/web/appjs/viewer/viewer.html
+          cp "$GITHUB_WORKSPACE/overlay/web-appshell-CMakeLists.txt" src/web/appshell/CMakeLists.txt
 
       - name: Configure workflow
         run: |
