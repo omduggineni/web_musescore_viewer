@@ -89,8 +89,7 @@ body {
 }
 
 /* Book: two-page spreads, each page sized to fit the spread rather than a
-   fixed cap. A lone trailing page (odd page count) sits on the left, where
-   its spread partner would otherwise have been, instead of centering alone. */
+   fixed cap. */
 #pages.layout-book .spread {
   display: flex;
   justify-content: center;
@@ -99,8 +98,11 @@ body {
   max-width: 1400px;
 }
 
-#pages.layout-book .spread-single {
-  justify-content: flex-start;
+/* A lone trailing page's spread has an invisible same-sized placeholder in
+   the second slot (see app.js) so it lands in the "left page" position
+   instead of centering by itself. */
+.page-placeholder {
+  visibility: hidden;
 }
 
 #pages.layout-book .spread .page {

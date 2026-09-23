@@ -141,10 +141,20 @@
       let i = 0;
       while (i < pageEls.length) {
         const spread = document.createElement('div');
-        const isLoneTrailingPage = i === pageEls.length - 1;
-        spread.className = isLoneTrailingPage ? 'spread spread-single' : 'spread';
+        spread.className = 'spread';
         spread.appendChild(pageEls[i].el);
-        if (pageEls[i + 1]) spread.appendChild(pageEls[i + 1].el);
+        if (pageEls[i + 1]) {
+          spread.appendChild(pageEls[i + 1].el);
+        } else {
+          // Lone trailing page (odd page count): a same-sized invisible
+          // placeholder occupies the second slot so the spread's centering
+          // math is identical to a full spread's, putting this page's left
+          // edge exactly where a real left-hand page would sit - not at the
+          // container's own edge, and not centered by itself either.
+          const placeholder = document.createElement('div');
+          placeholder.className = 'page page-placeholder';
+          spread.appendChild(placeholder);
+        }
         i += 2;
         els.pages.appendChild(spread);
       }
