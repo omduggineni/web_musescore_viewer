@@ -34,19 +34,6 @@ body {
   flex-wrap: wrap;
 }
 
-#pickerWrap {
-  font-size: 0.9rem;
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-#scorePicker {
-  font-size: 0.9rem;
-  padding: 0.25rem 0.4rem;
-}
-
 #scoreInfo {
   display: flex;
   gap: 0.6rem;
@@ -63,15 +50,15 @@ body {
   font-size: 0.9rem;
 }
 
-#midiLink {
+#viewModeBtn {
   margin-left: auto;
-  font-size: 0.85rem;
-  color: var(--accent);
-  text-decoration: none;
-}
-
-#midiLink:hover {
-  text-decoration: underline;
+  font-size: 0.82rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
 }
 
 #main {
@@ -93,18 +80,39 @@ body {
   flex-direction: column;
   gap: 1.5rem;
   align-items: center;
+  width: 100%;
+}
+
+/* Centered: one page per row, capped to a comfortable reading width. */
+#pages.layout-centered .page {
+  width: min(900px, 100%);
+}
+
+/* Book: page 1 alone (like a cover), then spreads of two pages side by
+   side - each page sized to fit the spread rather than a fixed cap. */
+#pages.layout-book .spread {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  width: 100%;
+  max-width: 1400px;
+}
+
+#pages.layout-book .spread .page {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 640px;
 }
 
 .page {
   position: relative;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
-  max-width: 100%;
 }
 
 .page img {
   display: block;
-  width: min(900px, 100%);
+  width: 100%;
   height: auto;
   cursor: pointer;
 }

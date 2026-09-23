@@ -6,16 +6,26 @@ For each score listed in scores-src/manifest.json, this:
   1. Runs `mscore --score-media` (real MuseScore 4 desktop CLI) to get
      per-page PNGs, cursor position/timing data (mposXML/sposXML), a
      multi-track MIDI export, and score metadata - all in one JSON blob.
-  2. Splits the MIDI by instrument track and renders each one separately
-     through fluidsynth + a GM soundfont, producing isolated per-instrument
-     audio stems (mscore's own --score-parts / mixer solo state do NOT
-     isolate audio in headless export - verified empirically; this MIDI
-     split is the approach that actually works).
+  2. Runs `mscore --score-parts` to get one isolated .mscz per instrument,
+     then renders each straight to MP3 via `mscore -o part.mp3 part.mscz`.
+     This uses MuseScore's own playback engine directly, so dynamics,
+     articulation and expression come through correctly - unlike an
+     earlier approach here that exported one combined MIDI file and
+     re-synthesized it through fluidsynth with a generic soundfont.
+
+     (Two things that look like they should isolate per-instrument audio
+     do NOT: exporting --score-parts and rendering the *original* score
+     is a no-op - the part .mscz still renders the full mix - and editing
+     a part's own audiosettings.json mute/solo state is silently ignored
+     by headless export. What actually works: rendering each
+     --score-parts .mscz directly, since it structurally contains only
+     that one instrument's Part/Staff data. Verified empirically - three
+     parts of the same score came back with distinct checksums and
+     distinct volume profiles matching each part's actual note content.)
   3. Writes everything as static files under public/scores/<id>/, plus a
      public/scores/index.json listing what's available.
 
-Requires on PATH: mscore (MuseScore 4 CLI), fluidsynth, ffmpeg.
-Requires the `mido` Python package.
+Requires on PATH: mscore (MuseScore 4 CLI). No other dependencies.
 """
 import base64
 import json
@@ -26,12 +36,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-import mido
-
 ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = ROOT / "scores-src"
 OUT_DIR = ROOT / "public" / "scores"
-SOUNDFONT = ROOT / "tools" / "soundfont" / "MS Basic.sf3"
 
 
 def run_score_media(mscz_path: Path) -> dict:
@@ -42,6 +49,35 @@ def run_score_media(mscz_path: Path) -> dict:
     out = proc.stdout.decode("utf-8", errors="replace")
     start = out.index("{")
     return json.loads(out[start:])
+
+
+def run_score_parts(mscz_path: Path) -> list[tuple[str, bytes]]:
+    proc = subprocess.run(
+        ["mscore", "--score-parts", str(mscz_path)],
+        capture_output=True, timeout=120,
+    )
+    out = proc.stdout.decode("utf-8", errors="replace")
+    start = out.index("{")
+    data = json.loads(out[start:])
+    return [
+        (name, base64.b64decode(b64))
+        for name, b64 in zip(data["parts"], data["partsBin"])
+    ]
+
+
+def render_part_audio(part_mscz_bytes: bytes, out_mp3: Path, workdir: Path):
+    part_mscz_path = workdir / "part.mscz"
+    part_mscz_path.write_bytes(part_mscz_bytes)
+    # mscore frequently SIGABRTs on exit (crash-reporter/MuseSampler cleanup)
+    # *after* successfully writing its output - verified repeatedly earlier
+    # in this project. Don't treat a nonzero exit as failure; only the
+    # output file's actual presence/size tells us whether it worked.
+    subprocess.run(
+        ["mscore", "-o", str(out_mp3), str(part_mscz_path)],
+        capture_output=True, timeout=120,
+    )
+    if not out_mp3.exists() or out_mp3.stat().st_size == 0:
+        raise RuntimeError(f"mscore did not produce {out_mp3}")
 
 
 def parse_positions_xml(xml_b64: str) -> dict:
@@ -80,64 +116,6 @@ def slugify(name: str) -> str:
     return s or "track"
 
 
-def split_midi_by_instrument(midi_bytes: bytes, workdir: Path) -> list[dict]:
-    """Group MIDI tracks by track_name (an instrument can span >1 track,
-    e.g. a divisi or grand-staff part) and render each group in isolation.
-    Returns [{name, order, midi_path}]."""
-    midi_path = workdir / "full.mid"
-    midi_path.write_bytes(midi_bytes)
-    mid = mido.MidiFile(str(midi_path))
-
-    tempo_msgs = [m for m in mid.tracks[0] if m.type == "set_tempo"]
-
-    groups: dict[str, list] = {}
-    order: list[str] = []
-    for track in mid.tracks:
-        names = [m.name for m in track if m.type == "track_name"]
-        has_notes = any(m.type == "note_on" and m.velocity > 0 for m in track)
-        if not names or not has_notes:
-            continue
-        name = names[0]
-        if name not in groups:
-            groups[name] = []
-            order.append(name)
-        groups[name].append(track)
-
-    results = []
-    for i, name in enumerate(order):
-        new_mid = mido.MidiFile(ticks_per_beat=mid.ticks_per_beat)
-        for track in groups[name]:
-            has_own_tempo = any(m.type == "set_tempo" for m in track)
-            new_track = mido.MidiTrack()
-            if not has_own_tempo:
-                for t in tempo_msgs:
-                    new_track.append(t.copy(time=0))
-            for msg in track:
-                new_track.append(msg)
-            new_mid.tracks.append(new_track)
-
-        out_path = workdir / f"track-{i}.mid"
-        new_mid.save(str(out_path))
-        results.append({"name": name, "order": i, "midi_path": out_path})
-
-    return results
-
-
-def render_stem(midi_path: Path, out_mp3: Path):
-    with tempfile.TemporaryDirectory() as td:
-        wav_path = Path(td) / "out.wav"
-        subprocess.run(
-            ["fluidsynth", "-ni", "-F", str(wav_path), "-r", "44100",
-             str(SOUNDFONT), str(midi_path)],
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav_path),
-             "-codec:a", "libmp3lame", "-qscale:a", "4", str(out_mp3)],
-            check=True, capture_output=True,
-        )
-
-
 def process_score(score_id: str, title_override: str | None = None):
     src = SRC_DIR / f"{score_id}.mscz"
     if not src.exists():
@@ -163,20 +141,20 @@ def process_score(score_id: str, title_override: str | None = None):
     midi_bytes = base64.b64decode(media["midi"])
     (out_dir / "score.mid").write_bytes(midi_bytes)
 
-    print(f"[{score_id}] splitting + rendering instrument stems ...")
+    print(f"[{score_id}] running mscore --score-parts + rendering audio ...")
+    parts = run_score_parts(src)
+    tracks_meta = []
     with tempfile.TemporaryDirectory() as td:
         workdir = Path(td)
-        stems = split_midi_by_instrument(midi_bytes, workdir)
-        tracks_meta = []
-        for stem in stems:
-            slug = slugify(stem["name"])
+        for order, (name, part_bytes) in enumerate(parts):
+            slug = slugify(name)
             mp3_path = tracks_dir / f"{slug}.mp3"
-            render_stem(stem["midi_path"], mp3_path)
+            render_part_audio(part_bytes, mp3_path, workdir)
             tracks_meta.append({
-                "id": slug, "name": stem["name"], "order": stem["order"],
+                "id": slug, "name": name, "order": order,
                 "file": f"tracks/{slug}.mp3",
             })
-            print(f"    - {stem['name']} -> {mp3_path.name}")
+            print(f"    - {name} -> {mp3_path.name}")
 
     meta = media["metadata"]
     score_meta = {
@@ -196,10 +174,6 @@ def process_score(score_id: str, title_override: str | None = None):
 def main():
     manifest_path = SRC_DIR / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-
-    if not SOUNDFONT.exists():
-        print(f"error: soundfont not found at {SOUNDFONT}", file=sys.stderr)
-        sys.exit(1)
 
     index = []
     for entry in manifest["scores"]:

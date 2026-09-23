@@ -2,15 +2,14 @@
   'use strict';
 
   const els = {
-    picker: document.getElementById('scorePicker'),
     title: document.getElementById('scoreTitle'),
     composer: document.getElementById('scoreComposer'),
+    viewModeBtn: document.getElementById('viewModeBtn'),
     pages: document.getElementById('pages'),
     channels: document.getElementById('channels'),
     playBtn: document.getElementById('playBtn'),
     seek: document.getElementById('seek'),
     timeLabel: document.getElementById('timeLabel'),
-    midiLink: document.getElementById('midiLink'),
   };
 
   const SEEK_RESOLUTION = 1000;
@@ -29,6 +28,7 @@
    *   volume:number, pan:number, muted:boolean, solo:boolean, source:AudioBufferSourceNode|null}>} */
   let tracks = new Map();
 
+  let layoutMode = 'centered'; // or 'book'
   let playing = false;
   let startCtxTime = 0;      // audioCtx.currentTime when playback last (re)started
   let startOffset = 0;       // playback position (seconds) at that moment
@@ -62,15 +62,7 @@
 
   async function loadIndex() {
     const res = await fetch('scores/index.json');
-    const list = await res.json();
-    els.picker.innerHTML = '';
-    for (const s of list) {
-      const opt = document.createElement('option');
-      opt.value = s.id;
-      opt.textContent = s.title;
-      els.picker.appendChild(opt);
-    }
-    return list;
+    return res.json();
   }
 
   function scoreIdFromUrl() {
@@ -100,9 +92,6 @@
 
     els.title.textContent = meta.title;
     els.composer.textContent = meta.composer || '';
-    els.picker.value = id;
-    els.midiLink.href = base + 'score.mid';
-    els.midiLink.download = `${meta.title}.mid`;
 
     renderPages(base, meta.npages);
     renderMixer(meta.tracks);
@@ -134,9 +123,37 @@
 
       pageDiv.appendChild(img);
       pageDiv.appendChild(cursorEl);
-      els.pages.appendChild(pageDiv);
       pageEls.push({ el: pageDiv, img, cursorEl });
     }
+    applyLayout();
+  }
+
+  // Re-parents the existing page elements into the current layout (does not
+  // recreate them, so click/cursor listeners on each <img> stay intact).
+  function applyLayout() {
+    els.pages.className = layoutMode === 'book' ? 'layout-book' : 'layout-centered';
+    els.pages.innerHTML = '';
+
+    if (layoutMode === 'centered') {
+      for (const p of pageEls) els.pages.appendChild(p.el);
+    } else {
+      // Book pagination: page 1 alone (like a cover), then two-page spreads.
+      let i = 0;
+      while (i < pageEls.length) {
+        const spread = document.createElement('div');
+        spread.className = 'spread';
+        if (i === 0) {
+          spread.appendChild(pageEls[0].el);
+          i = 1;
+        } else {
+          spread.appendChild(pageEls[i].el);
+          if (pageEls[i + 1]) spread.appendChild(pageEls[i + 1].el);
+          i += 2;
+        }
+        els.pages.appendChild(spread);
+      }
+    }
+    updateCursor();
   }
 
   function renderMixer(trackMetas) {
@@ -408,8 +425,10 @@
     seekDragging = false;
   });
 
-  els.picker.addEventListener('change', () => {
-    loadScore(els.picker.value);
+  els.viewModeBtn.addEventListener('click', () => {
+    layoutMode = layoutMode === 'centered' ? 'book' : 'centered';
+    els.viewModeBtn.textContent = layoutMode === 'centered' ? 'Book view' : 'Centered view';
+    applyLayout();
   });
 
   window.addEventListener('resize', updateCursor);
