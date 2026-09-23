@@ -22,6 +22,7 @@
   let currentScore = null;   // meta.json contents
   let positions = null;      // positions.json contents
   let elementsById = null;   // Map<id, element>
+  let eventPositionByElId = null; // Map<elementId, ms>
   let pageEls = [];          // [{el, img, cursorEl}]
 
   /** @type {Map<string, {buffer:AudioBuffer, gain:GainNode, panner:StereoPannerNode,
@@ -94,6 +95,7 @@
     currentScore = meta;
     positions = pos;
     elementsById = new Map(positions.elements.map(e => [e.id, e]));
+    eventPositionByElId = new Map(positions.events.map(e => [e.elid, e.position]));
     duration = meta.duration || 0;
 
     els.title.textContent = meta.title;
@@ -125,6 +127,7 @@
       img.src = base + `page-${i}.png`;
       img.alt = `Page ${i + 1}`;
       img.draggable = false;
+      img.addEventListener('click', (e) => onPageClick(i, img, e));
 
       const cursorEl = document.createElement('div');
       cursorEl.className = 'cursor-hl';
@@ -347,6 +350,43 @@
       lastActivePage = elInfo.page;
       page.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
+  }
+
+  // Nearest element on `page` to point (px, py), both in PNG-pixel space.
+  // Distance to a rect is 0 when the point is inside it, so a click on a
+  // notehead/rest always wins; elsewhere (margins, gaps between systems)
+  // this falls back to whatever's closest.
+  function findElementAtPoint(page, px, py) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const el of positions.elements) {
+      if (el.page !== page) continue;
+      const dx = px < el.x ? el.x - px : Math.max(0, px - (el.x + el.sx));
+      const dy = py < el.y ? el.y - py : Math.max(0, py - (el.y + el.sy));
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = el;
+      }
+    }
+    return best;
+  }
+
+  function onPageClick(pageIndex, img, e) {
+    if (!positions || positions.elements.length === 0) return;
+    const scale = img.clientWidth / img.naturalWidth;
+    if (!scale) return;
+
+    const px = e.offsetX / scale;
+    const py = e.offsetY / scale;
+    const el = findElementAtPoint(pageIndex, px, py);
+    if (!el) return;
+
+    const ms = eventPositionByElId.get(el.id);
+    if (ms === undefined) return;
+
+    ensureAudioCtx();
+    seekTo(ms / 1000);
   }
 
   // ---------- Wiring ----------
