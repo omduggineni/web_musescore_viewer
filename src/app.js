@@ -4,6 +4,8 @@
   const els = {
     title: document.getElementById('scoreTitle'),
     composer: document.getElementById('scoreComposer'),
+    tempoBtn: document.getElementById('tempoBtn'),
+    tempoPanel: document.getElementById('tempoPanel'),
     tempoLabel: document.getElementById('tempoLabel'),
     metronomeBtn: document.getElementById('metronomeBtn'),
     speedSlider: document.getElementById('speedSlider'),
@@ -27,30 +29,9 @@
 
   const SEEK_RESOLUTION = 1000;
 
-  // Firefox has long-standing bugs (bugzilla 966247/1517199/1251640/1648277)
-  // where a rate-changed, pitch-preserved <audio> element routed through
-  // Web Audio via createMediaElementSource glitches/pops - worse with more
-  // simultaneous tracks. Chrome/Safari don't share this bug. Rather than
-  // give up the Web Audio mixing graph (panning, clean gain nodes) on
-  // Firefox, we just disable the speed control there - see the isFirefox
-  // block below.
-  const isFirefox = /firefox/i.test(navigator.userAgent);
-  const FIREFOX_BUG_URL = 'https://bugzilla.mozilla.org/show_bug.cgi?id=1517199';
-
   const ZOOM_STEP = 0.15;
   const ZOOM_MIN = 0.55;
   const ZOOM_MAX = 2.5;
-
-  // How far inside the viewport edges the active staff must stay while
-  // "following" (see the Cursor sync section) - a fraction of the
-  // viewport's own height, not a fixed pixel count, so it scales with
-  // zoom/window size.
-  const FOLLOW_MARGIN_FRACTION = 0.12;
-  // How long a programmatic scroll can go without a 'scrollend' before we
-  // give up waiting for one and clear the flag anyway (older/inconsistent
-  // 'scrollend' support) - longer than the CSS scroll-behavior:smooth
-  // default duration for any scroll distance this app produces.
-  const FOLLOW_SCROLL_FALLBACK_MS = 700;
 
   // Lucide icon paths (ISC license), swapped into a single <svg> on state
   // change rather than keeping two elements and toggling which is hidden.
@@ -88,24 +69,6 @@
   let tracks = new Map();
 
   let layoutMode = 'centered'; // or 'book'
-  // Whether the view should keep scrolling to follow the active staff.
-  // Explicit rather than inferred from position history: armed by
-  // pressing play, seeking, or clicking a note; disarmed the moment the
-  // user scrolls away from the active staff on their own (see the Cursor
-  // sync section), and re-armed if they scroll back to it.
-  let followEnabled = false;
-  let followScrollActive = false; // true while a scroll we started is in flight
-  let followScrollFallbackTimer = null;
-  // The active staff's page/position/scale, kept instead of a precomputed
-  // rect: handleManualScroll() below recomputes computeCursorRect() from
-  // page.el's *current* getBoundingClientRect() each time, since a stored
-  // viewport-relative rect goes stale the instant the page scrolls
-  // (including our own follow-scroll moving it) - comparing a pre-scroll
-  // snapshot against the post-scroll viewport was flipping followEnabled
-  // back off right after arming it.
-  let currentCursorPage = null;
-  let currentCursorElInfo = null;
-  let currentCursorScale = 0;
   let playing = false;
   let startOffset = 0;       // playback position (seconds) while paused
   let duration = 0;          // seconds
@@ -156,11 +119,6 @@
     el.webkitPreservesPitch = value;
   }
 
-  function updateSpeedUI() {
-    els.speedValue.textContent = `${speed.toFixed(2)}×`;
-    updateTempoUI();
-  }
-
   // The tempo in effect at the current playhead, not just the score's
   // initial marking - scores with a rit./accelerando/fermata have several.
   function currentBaseBpm() {
@@ -176,15 +134,14 @@
   }
 
   function updateTempoUI() {
+    els.speedValue.textContent = `${speed.toFixed(2)}×`;
     const baseBpm = currentBaseBpm();
     if (!baseBpm) {
       els.tempoLabel.textContent = '';
       return;
     }
     const effectiveBpm = Math.round(baseBpm * speed);
-    els.tempoLabel.textContent = speed === 1
-      ? `♩ = ${baseBpm}`
-      : `♩ = ${effectiveBpm} (${baseBpm} × ${speed.toFixed(2)})`;
+    els.tempoLabel.textContent = `♩ = ${effectiveBpm}`;
   }
 
   // ---------- Loading a score ----------
@@ -207,9 +164,7 @@
     els.seek.disabled = true;
     els.seek.value = 0;
     els.timeLabel.textContent = '0:00 / 0:00';
-    followEnabled = false;
-    currentCursorPage = null;
-    currentCursorElInfo = null;
+    lastCursorKey = null;
 
     const base = `scores/${id}/`;
     const [meta, pos, tempos, beats] = await Promise.all([
@@ -233,7 +188,7 @@
 
     speed = 1;
     els.speedSlider.value = 1;
-    updateSpeedUI();
+    updateTempoUI();
 
     renderPages(base, meta.npages);
     renderMixer(meta.tracks);
@@ -495,9 +450,7 @@
     resetMetronomeSchedule(startOffset);
     playing = true;
     setPlayButtonState(true);
-    // Pressing play always (re-)arms follow and snaps to the playhead,
-    // regardless of whatever was scrolled into view beforehand.
-    updateCursor(/* forceScroll */ true);
+    updateCursor();
     tickLoop();
   }
 
@@ -599,61 +552,13 @@
 
   // ---------- Cursor sync ----------
   //
-  // "Follow" (see followEnabled above) is the whole model here: while armed,
-  // the view keeps the active staff comfortably on screen, including across
-  // staff/page changes during playback; scrolling away from it by hand
-  // disarms follow so nothing fights the user, and scrolling back to it
-  // re-arms. This replaced an earlier approach that inferred "was the
-  // cursor visible before this change" from position history - simpler on
-  // paper, but it broke in different ways on different engines (e.g. a
-  // sliver of overlap counting as "visible" and leaving a staff half-cut-
-  // off; a CSS-transitioned rect read back mid-transition on Firefox but
-  // not Chrome). Explicit state sidesteps that whole class of bug.
+  // No toggle, no inference - just scroll to the cursor whenever it moves
+  // to a new staff line or page, so playback keeps the active line on
+  // screen without re-centering on every single note. `forceScroll` (from
+  // seeking or clicking a note) always jumps regardless, since the point
+  // there is guaranteeing you see where you jumped to.
 
-  // The cursor's on-screen rect computed from position data directly,
-  // rather than reading it back via page.cursorEl.getBoundingClientRect()
-  // right after setting its style - that rect can be mid-transition
-  // (.cursor-hl animates top/left/width/height for smooth movement between
-  // notes already on screen) and isn't guaranteed to already reflect the
-  // target value when read back synchronously, inconsistently across
-  // browsers. Computing it ourselves sidesteps the question entirely.
-  function computeCursorRect(page, elInfo, scale) {
-    const pageRect = page.el.getBoundingClientRect();
-    const top = pageRect.top + elInfo.y * scale;
-    const left = pageRect.left + elInfo.x * scale;
-    const width = elInfo.sx * scale;
-    const height = elInfo.sy * scale;
-    return { top, left, width, height, bottom: top + height, right: left + width };
-  }
-
-  // Whether `rect` sits comfortably inside `wrapRect` - fully contained
-  // with margin to spare, not merely overlapping at the edge - or, when
-  // `rect` is bigger than the margin-adjusted viewport in a dimension
-  // (e.g. very high zoom), aligned to the near edge (top over bottom, left
-  // over right) so as much as possible shows. Used to decide whether
-  // follow needs to scroll, and (see handleManualScroll) whether a manual
-  // scroll has taken the staff out of comfortable view - the stricter of
-  // the two checks used there, for leaving follow armed. Horizontal
-  // position is ignored: at high zoom a staff line is wider than the
-  // viewport, so the cursor legitimately walks off the left/right edge
-  // while playing along a single line - that's normal reading, not the
-  // user scrolling away.
-  function isComfortable(rect, wrapRect) {
-    const margin = wrapRect.height * FOLLOW_MARGIN_FRACTION;
-    return rect.height <= wrapRect.height - 2 * margin
-      ? (rect.top >= wrapRect.top + margin && rect.bottom <= wrapRect.bottom - margin)
-      : Math.abs(rect.top - wrapRect.top) < 1;
-  }
-
-  // Whether `rect` overlaps `wrapRect` at all, vertically - not
-  // comfortable, not centered, just some overlap. The looser of the two
-  // checks in handleManualScroll, used for re-arming follow: scrolling
-  // back to where the staff is merely visible again is enough to resume,
-  // rather than requiring a scroll all the way back to comfortable -
-  // follow's own scrolling then re-centers it from there anyway.
-  function isRoughlyVisible(rect, wrapRect) {
-    return rect.top < wrapRect.bottom && rect.bottom > wrapRect.top;
-  }
+  let lastCursorKey = null; // `${page}:${y}` of the staff line last scrolled to
 
   // The (deltaY, deltaX) to scroll by so `cursorRect` becomes visible:
   // centered in a dimension where it fits, or - when it's bigger than the
@@ -670,33 +575,6 @@
     return { deltaY, deltaX };
   }
 
-  // Scrolls #pagesWrap and tags it as our own doing, so the 'scroll'
-  // listener below doesn't mistake the resulting events for a manual
-  // scroll and disarm follow. Cleared on 'scrollend', with a timed
-  // fallback in case that event doesn't fire.
-  function followScrollBy(deltaY, deltaX) {
-    followScrollActive = true;
-    if (followScrollFallbackTimer) clearTimeout(followScrollFallbackTimer);
-    followScrollFallbackTimer = setTimeout(() => { followScrollActive = false; }, FOLLOW_SCROLL_FALLBACK_MS);
-    els.pagesWrap.scrollBy({ top: deltaY, left: deltaX, behavior: 'smooth' });
-  }
-
-  // Stops an in-flight follow scroll immediately (rather than letting the
-  // browser's smooth-scroll animation keep running and fight the user) -
-  // called the instant manual scroll input (wheel/touch) is detected.
-  function cancelFollowScroll() {
-    if (!followScrollActive) return;
-    const wrap = els.pagesWrap;
-    wrap.scrollTo({ top: wrap.scrollTop, left: wrap.scrollLeft, behavior: 'auto' });
-    followScrollActive = false;
-    if (followScrollFallbackTimer) { clearTimeout(followScrollFallbackTimer); followScrollFallbackTimer = null; }
-  }
-
-  // `forceScroll` is for a deliberate one-shot jump (the seek bar, or
-  // clicking a note): it always arms follow and always centers on the
-  // result, skipping the comfort check entirely - "regardless of the
-  // above logic," since the point is guaranteeing you see where you
-  // jumped to, not just topping up an already-fine view.
   function updateCursor(forceScroll = false) {
     if (!positions || positions.events.length === 0) return;
     const tMs = getCurrentTime() * 1000;
@@ -718,11 +596,6 @@
     const scale = pageScale(page.img);
     if (!scale) return;
 
-    currentCursorPage = page;
-    currentCursorElInfo = elInfo;
-    currentCursorScale = scale;
-    const cursorRect = computeCursorRect(page, elInfo, scale);
-
     pageEls.forEach((p, i) => {
       p.cursorEl.style.display = i === elInfo.page ? 'block' : 'none';
     });
@@ -732,56 +605,33 @@
     page.cursorEl.style.width = `${elInfo.sx * scale}px`;
     page.cursorEl.style.height = `${elInfo.sy * scale}px`;
 
-    if (forceScroll) {
-      followEnabled = true;
-      const wrapRect = els.pagesWrap.getBoundingClientRect();
-      const { deltaY, deltaX } = cursorScrollDelta(cursorRect, wrapRect);
-      if (Math.abs(deltaY) > 1 || Math.abs(deltaX) > 1) followScrollBy(deltaY, deltaX);
-    } else if (followEnabled) {
-      const wrapRect = els.pagesWrap.getBoundingClientRect();
-      if (!isComfortable(cursorRect, wrapRect)) {
-        // Vertical-only while continuously following - re-centering
-        // horizontally on every note would be distracting when reading
-        // across a staff line wider than the viewport (high zoom).
-        const { deltaY } = cursorScrollDelta(cursorRect, wrapRect);
-        followScrollBy(deltaY, 0);
-      }
+    const key = `${elInfo.page}:${elInfo.y}`;
+    const lineChanged = key !== lastCursorKey;
+    lastCursorKey = key;
+    if (!forceScroll && !lineChanged) return;
+
+    // Cursor rect computed from position data directly, rather than
+    // reading it back via page.cursorEl.getBoundingClientRect() right
+    // after setting its style above - that rect can be mid-transition
+    // (.cursor-hl animates top/left/width/height for smooth movement) and
+    // isn't guaranteed to already reflect the target value when read back
+    // synchronously, inconsistently across browsers.
+    const pageRect = page.el.getBoundingClientRect();
+    const cursorRect = {
+      top: pageRect.top + elInfo.y * scale,
+      left: pageRect.left + elInfo.x * scale,
+      width: elInfo.sx * scale,
+      height: elInfo.sy * scale,
+    };
+    cursorRect.bottom = cursorRect.top + cursorRect.height;
+    cursorRect.right = cursorRect.left + cursorRect.width;
+
+    const wrapRect = els.pagesWrap.getBoundingClientRect();
+    const { deltaY, deltaX } = cursorScrollDelta(cursorRect, wrapRect);
+    if (Math.abs(deltaY) > 1 || Math.abs(deltaX) > 1) {
+      els.pagesWrap.scrollBy({ top: deltaY, left: deltaX, behavior: 'smooth' });
     }
   }
-
-  // A #pagesWrap 'scroll' event we didn't cause ourselves (see
-  // followScrollBy/cancelFollowScroll) - the user dragged the scrollbar,
-  // used a wheel/touchpad, or paged with PageUp/Down (stepPage() doesn't
-  // tag its own scroll as ours, since that's deliberate manual navigation
-  // too). Recomputes the staff's rect fresh (rather than reusing one from
-  // updateCursor) since page.el's getBoundingClientRect() reflects
-  // wherever the page has scrolled to by now, including from this very
-  // scroll event.
-  //
-  // Disarming and re-arming use different thresholds on purpose: leaving
-  // follow armed requires the staff to still be comfortably shown (the
-  // stricter check - drifting to the edge counts as "scrolled away"), but
-  // resuming only requires the staff to be visible again at all (the
-  // looser one) - otherwise you'd have to scroll all the way back to
-  // comfortable just to resume, when follow's own scrolling re-centers it
-  // from anywhere visible anyway.
-  function handleManualScroll() {
-    if (!currentCursorPage) return;
-    const rect = computeCursorRect(currentCursorPage, currentCursorElInfo, currentCursorScale);
-    const wrapRect = els.pagesWrap.getBoundingClientRect();
-    followEnabled = followEnabled ? isComfortable(rect, wrapRect) : isRoughlyVisible(rect, wrapRect);
-  }
-
-  els.pagesWrap.addEventListener('wheel', cancelFollowScroll, { passive: true });
-  els.pagesWrap.addEventListener('touchmove', cancelFollowScroll, { passive: true });
-  els.pagesWrap.addEventListener('scrollend', () => {
-    followScrollActive = false;
-    if (followScrollFallbackTimer) { clearTimeout(followScrollFallbackTimer); followScrollFallbackTimer = null; }
-  });
-  els.pagesWrap.addEventListener('scroll', () => {
-    if (followScrollActive) return; // an echo of our own scroll
-    handleManualScroll();
-  });
 
   // Nearest element on `page` to point (px, py), both in PNG-pixel space.
   // Distance to a rect is 0 when the point is inside it, so a click on a
@@ -848,7 +698,7 @@
 
   els.speedSlider.addEventListener('input', () => {
     speed = parseFloat(els.speedSlider.value);
-    updateSpeedUI();
+    updateTempoUI();
     // <audio>.playbackRate can change live without resetting currentTime or
     // needing a restart - and with preservesPitch set, it only changes speed.
     for (const t of tracks.values()) {
@@ -922,6 +772,23 @@
   els.mixerToggleBtn.addEventListener('click', () => setMixerOpen(!mixerOpen));
   setMixerOpen(mixerOpen);
 
+  // Tempo/speed dropdown: metronome toggle + speed slider, tucked behind the
+  // tempo readout button instead of sitting in the topbar all the time.
+  function setTempoPanelOpen(open) {
+    els.tempoPanel.hidden = !open;
+    els.tempoBtn.setAttribute('aria-expanded', String(open));
+  }
+
+  els.tempoBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setTempoPanelOpen(els.tempoPanel.hidden);
+  });
+  els.tempoPanel.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => setTempoPanelOpen(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setTempoPanelOpen(false);
+  });
+
   function setMetronomeOn(on) {
     metronomeOn = on;
     els.metronomeBtn.classList.toggle('active', on);
@@ -970,15 +837,6 @@
         break;
     }
   });
-
-  if (isFirefox) {
-    els.speedSlider.disabled = true;
-    const tooltip = `Speed control is disabled in Firefox due to a browser bug ` +
-      `that causes audio glitches when playback rate changes on multi-track ` +
-      `audio (${FIREFOX_BUG_URL})`;
-    els.speedSlider.title = tooltip;
-    document.getElementById('speedWrap').title = tooltip;
-  }
 
   (async function init() {
     const list = await loadIndex();

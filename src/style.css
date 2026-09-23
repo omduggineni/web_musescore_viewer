@@ -57,34 +57,64 @@ body {
   gap: 1rem;
 }
 
-#tempoGroup {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
+.dropdown {
+  position: relative;
 }
 
-#tempoLabel {
+.tempo-btn {
+  font: inherit;
   font-size: 0.85rem;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
 }
 
-#speedWrap {
-  font-size: 0.82rem;
-  color: var(--text-dim);
+.tempo-btn[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+#tempoLabel:empty::before {
+  content: "Tempo";
+}
+
+.dropdown-panel {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0.7rem 0.8rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+/* An author-stylesheet `display` always wins over the UA's `[hidden] {
+   display: none}` rule regardless of selector specificity - without this,
+   the panel's own `display: flex` above keeps it visible even with the
+   `hidden` attribute set. */
+.dropdown-panel[hidden] {
+  display: none;
 }
 
 #speedSlider {
-  width: 100px;
+  width: 140px;
 }
 
 #speedValue {
+  font-size: 0.82rem;
+  color: var(--text-dim);
   font-variant-numeric: tabular-nums;
-  width: 3.2em;
+  white-space: nowrap;
 }
 
 .icon-btn {

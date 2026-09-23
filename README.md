@@ -88,15 +88,6 @@ A track is audible if: no track is soloed and it isn't muted, OR it is
 itself soloed (standard mixer behavior). Mute and solo are mutually
 exclusive per track - selecting one clears the other on that same track.
 
-### Firefox
-
-Firefox has long-standing bugs (Bugzilla 966247/1517199/1251640/1648277)
-where a rate-changed, pitch-preserved `<audio>` element routed through Web
-Audio glitches/pops, worse with more simultaneous tracks - Chrome and
-Safari don't share this bug. Rather than give up per-track Web Audio
-mixing (panning, clean gain nodes) on Firefox, the speed control is
-disabled there instead, with a tooltip linking to the bug.
-
 ## Adding scores
 
 Drop a `.mscz` file in `scores/`, add its id (and optional title override)
