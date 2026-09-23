@@ -481,14 +481,14 @@
     }
   }
 
-  function seekTo(seconds) {
+  function seekTo(seconds, forceScroll = false) {
     startOffset = Math.min(Math.max(seconds, 0), duration);
     for (const t of tracks.values()) {
       if (t.audioEl) t.audioEl.currentTime = startOffset;
     }
     resetMetronomeSchedule(startOffset);
     updateTimeUI();
-    updateCursor();
+    updateCursor(forceScroll);
     updateTempoUI();
   }
 
@@ -565,17 +565,35 @@
   // ---------- Cursor sync ----------
 
   let lastScrolledKey = null; // `${page}:${y}` of the last staff line checked
+  let lastCursorRect = null; // that staff line's analytically-computed rect
 
-  // Whether `rect` is vertically visible within `wrapRect` - horizontal
-  // position isn't checked here. At high zoom a staff line is wider than
-  // the viewport, so the cursor legitimately walks off the left/right
-  // edge while playing along a single line; that's normal horizontal
-  // reading, not the user scrolling away, and shouldn't look like the
-  // cursor "wasn't visible" just because of where it sits on the line.
+  // The cursor's on-screen rect computed from position data directly,
+  // rather than reading it back via page.cursorEl.getBoundingClientRect()
+  // right after setting its style. That distinction matters: .cursor-hl
+  // has a CSS transition on top/left/width/height for smooth movement
+  // between notes already on screen (as opposed to a page becoming newly
+  // visible, which has no prior state to transition from), and a
+  // just-triggered transition's rect isn't guaranteed to already reflect
+  // the target value when read back synchronously - confirmed this
+  // silently broke same-page staff-change detection on Firefox (page
+  // changes, which don't transition, worked fine).
+  function computeCursorRect(page, elInfo, scale) {
+    const pageRect = page.el.getBoundingClientRect();
+    const top = pageRect.top + elInfo.y * scale;
+    const left = pageRect.left + elInfo.x * scale;
+    const width = elInfo.sx * scale;
+    const height = elInfo.sy * scale;
+    return { top, left, width, height, bottom: top + height, right: left + width };
+  }
+
+  // Whether `rect` overlaps `wrapRect` vertically at all - not full
+  // containment, not centered, just some intersection. Horizontal
+  // position isn't checked: at high zoom a staff line is wider than the
+  // viewport, so the cursor legitimately walks off the left/right edge
+  // while playing along a single line; that's normal horizontal reading,
+  // not the user scrolling away, and shouldn't count as "not visible."
   function isVisible(rect, wrapRect) {
-    return rect.height <= wrapRect.height
-      ? (rect.top >= wrapRect.top && rect.bottom <= wrapRect.bottom)
-      : Math.abs(rect.top - wrapRect.top) < 1;
+    return rect.top < wrapRect.bottom && rect.bottom > wrapRect.top;
   }
 
   // The (deltaY, deltaX) to scroll by so `cursorRect` becomes visible:
@@ -593,7 +611,11 @@
     return { deltaY, deltaX };
   }
 
-  function updateCursor() {
+  // `forceScroll` bypasses the "was it visible before" gate below, always
+  // scrolling the staff into view if it isn't already - used for the seek
+  // bar, where jumping to the clicked time should always show where that
+  // is, regardless of whatever was on screen beforehand.
+  function updateCursor(forceScroll = false) {
     if (!positions || positions.events.length === 0) return;
     const tMs = getCurrentTime() * 1000;
 
@@ -621,16 +643,17 @@
     // was actually on screen: only then do we auto-scroll to follow it to
     // the new staff. If the user had already scrolled it out of view
     // (reading ahead/behind on purpose), leave their view alone.
+    const newCursorRect = computeCursorRect(page, elInfo, scale);
     const scrollKey = `${elInfo.page}:${elInfo.y}`;
     const staffChanged = scrollKey !== lastScrolledKey;
     let wasVisible = false;
     if (staffChanged) {
-      const prevPage = pageEls.find(p => p.cursorEl.style.display === 'block');
-      if (prevPage) {
-        wasVisible = isVisible(prevPage.cursorEl.getBoundingClientRect(), els.pagesWrap.getBoundingClientRect());
+      if (lastCursorRect) {
+        wasVisible = isVisible(lastCursorRect, els.pagesWrap.getBoundingClientRect());
       }
       lastScrolledKey = scrollKey;
     }
+    lastCursorRect = newCursorRect;
 
     pageEls.forEach((p, i) => {
       p.cursorEl.style.display = i === elInfo.page ? 'block' : 'none';
@@ -641,11 +664,10 @@
     page.cursorEl.style.width = `${elInfo.sx * scale}px`;
     page.cursorEl.style.height = `${elInfo.sy * scale}px`;
 
-    if (staffChanged && wasVisible) {
+    if (forceScroll || (staffChanged && wasVisible)) {
       const wrapRect = els.pagesWrap.getBoundingClientRect();
-      const cursorRect = page.cursorEl.getBoundingClientRect();
-      if (!isVisible(cursorRect, wrapRect)) {
-        const { deltaY, deltaX } = cursorScrollDelta(cursorRect, wrapRect);
+      if (!isVisible(newCursorRect, wrapRect)) {
+        const { deltaY, deltaX } = cursorScrollDelta(newCursorRect, wrapRect);
         els.pagesWrap.scrollBy({ top: deltaY, left: deltaX, behavior: 'smooth' });
       }
     }
@@ -710,7 +732,7 @@
   });
   els.seek.addEventListener('change', () => {
     const frac = parseInt(els.seek.value, 10) / SEEK_RESOLUTION;
-    seekTo(frac * duration);
+    seekTo(frac * duration, /* forceScroll */ true);
     seekDragging = false;
   });
 
