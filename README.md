@@ -117,11 +117,18 @@ npm run serve
 
 Then open `http://localhost:8000/index.html?score=<id>`.
 
+## Keyboard shortcuts
+
+Space play/pause · Page Up/Down (or Fn+Up/Down on a Mac) scroll by one
+screenful · M toggles the metronome. Ignored while a form control (a
+slider) has focus, so its own native keyboard handling still works.
+
 ## Icons
 
-Toolbar icons (metronome, page-layout toggle, mixer toggle) are inlined
-directly in `index.html` as SVG - copied from [Lucide](https://lucide.dev)
-(ISC license). No icon font or library is fetched at runtime.
+Toolbar icons (metronome, page-layout toggle, zoom in/out, fullscreen,
+mixer toggle) are inlined directly in `index.html` as SVG - copied from
+[Lucide](https://lucide.dev) (ISC license). No icon font or library is
+fetched at runtime.
 
 ## License
 
