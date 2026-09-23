@@ -66,19 +66,13 @@
         </button>
       </div>
       <button id="fullscreenBtn" type="button" class="icon-btn" title="Fullscreen" aria-pressed="false">
-        <!-- Lucide "maximize" icon - https://lucide.dev/icons/maximize (ISC license) -->
-        <svg id="maximizeIcon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- Lucide "maximize" icon - https://lucide.dev/icons/maximize (ISC license); swapped
+             for "minimize" (https://lucide.dev/icons/minimize, also ISC) when active - app.js -->
+        <svg id="fullscreenIcon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M8 3H5a2 2 0 0 0-2 2v3" />
           <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
           <path d="M3 16v3a2 2 0 0 0 2 2h3" />
           <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-        </svg>
-        <!-- Lucide "minimize" icon - https://lucide.dev/icons/minimize (ISC license) -->
-        <svg id="minimizeIcon" hidden viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M8 3v3a2 2 0 0 1-2 2H3" />
-          <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
-          <path d="M3 16h3a2 2 0 0 1 2 2v3" />
-          <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
         </svg>
       </button>
       <button id="mixerToggleBtn" type="button" class="icon-btn" title="Toggle mixer" aria-pressed="true">
@@ -110,7 +104,13 @@
   </main>
 
   <footer id="transport">
-    <button id="playBtn" disabled>Play</button>
+    <button id="playBtn" class="icon-btn" title="Play" aria-pressed="false" disabled>
+      <!-- Lucide "play" icon - https://lucide.dev/icons/play (ISC license); swapped for
+           "pause" (https://lucide.dev/icons/pause, also ISC) while playing - app.js -->
+      <svg id="playIcon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />
+      </svg>
+    </button>
     <input id="seek" type="range" min="0" max="1000" value="0" step="1" disabled>
     <span id="timeLabel">0:00 / 0:00</span>
   </footer>

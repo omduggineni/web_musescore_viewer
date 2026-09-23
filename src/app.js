@@ -13,14 +13,14 @@
     zoomOutBtn: document.getElementById('zoomOutBtn'),
     zoomInBtn: document.getElementById('zoomInBtn'),
     fullscreenBtn: document.getElementById('fullscreenBtn'),
-    maximizeIcon: document.getElementById('maximizeIcon'),
-    minimizeIcon: document.getElementById('minimizeIcon'),
+    fullscreenIcon: document.getElementById('fullscreenIcon'),
     mixer: document.getElementById('mixer'),
     mixerToggleBtn: document.getElementById('mixerToggleBtn'),
     pagesWrap: document.getElementById('pagesWrap'),
     pages: document.getElementById('pages'),
     channels: document.getElementById('channels'),
     playBtn: document.getElementById('playBtn'),
+    playIcon: document.getElementById('playIcon'),
     seek: document.getElementById('seek'),
     timeLabel: document.getElementById('timeLabel'),
   };
@@ -41,6 +41,13 @@
   const ZOOM_MIN = 0.55;
   const ZOOM_MAX = 2.5;
 
+  // Lucide icon paths (ISC license), swapped into a single <svg> on state
+  // change rather than keeping two elements and toggling which is hidden.
+  const PLAY_ICON = '<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />';
+  const PAUSE_ICON = '<rect x="14" y="3" width="5" height="18" rx="1" /><rect x="5" y="3" width="5" height="18" rx="1" />';
+  const MAXIMIZE_ICON = '<path d="M8 3H5a2 2 0 0 0-2 2v3" /><path d="M21 8V5a2 2 0 0 0-2-2h-3" /><path d="M3 16v3a2 2 0 0 0 2 2h3" /><path d="M16 21h3a2 2 0 0 0 2-2v-3" />';
+  const MINIMIZE_ICON = '<path d="M8 3v3a2 2 0 0 1-2 2H3" /><path d="M21 8h-3a2 2 0 0 1-2-2V3" /><path d="M3 16h3a2 2 0 0 1 2 2v3" /><path d="M16 21v-3a2 2 0 0 1 2-2h3" />';
+
   /** @type {AudioContext|null} */
   let audioCtx = null;
   let masterGain = null;
@@ -59,6 +66,11 @@
   let pageEls = [];          // [{el, img, cursorEl}]
   /** @type {IntersectionObserver|null} */
   let pageObserver = null;   // lazy-loads/unloads page images as they scroll
+  // All pages of a score share the same pixel dimensions. Cached from
+  // whichever page loads first so scale can be computed for a page whose
+  // own image hasn't loaded yet (e.g. clicking a still-grey page).
+  let sharedNaturalWidth = 0;
+  let sharedNaturalHeight = 0;
 
   /** @type {Map<string, {audioEl:HTMLAudioElement, gain:GainNode, panner:StereoPannerNode,
    *   volume:number, pan:number, muted:boolean, solo:boolean}>} */
@@ -204,6 +216,15 @@
     history.replaceState(null, '', url);
   }
 
+  // PNG-pixel-to-screen-pixel ratio for `img`. Falls back to the shared
+  // natural dimensions (cached from whichever page loaded first) when
+  // `img` itself hasn't loaded yet, so clicking/highlighting a still-grey
+  // page works immediately instead of waiting on that specific image.
+  function pageScale(img) {
+    const naturalWidth = img.naturalWidth || sharedNaturalWidth;
+    return naturalWidth ? img.clientWidth / naturalWidth : 0;
+  }
+
   // Pages are typically full-resolution PNGs a couple MB each, and a long
   // score can have dozens - loading them all upfront wastes bandwidth and
   // memory for pages nobody's looking at. Each <img> holds its real URL in
@@ -214,6 +235,8 @@
   function renderPages(base, npages) {
     if (pageObserver) pageObserver.disconnect();
     els.pages.style.removeProperty('--page-ratio');
+    sharedNaturalWidth = 0;
+    sharedNaturalHeight = 0;
     pageEls = [];
     for (let i = 0; i < npages; i++) {
       const pageDiv = document.createElement('div');
@@ -226,8 +249,14 @@
       img.addEventListener('click', (e) => onPageClick(i, img, e));
       // Once we know one page's aspect ratio, apply it to all of them so
       // an unloaded (src-less) page still reserves the right amount of
-      // space instead of collapsing and jumping the scroll position.
+      // space instead of collapsing and jumping the scroll position. Also
+      // cache the actual pixel dimensions (all pages share them) so scale
+      // can be computed for a page whose own image isn't loaded yet.
       img.addEventListener('load', () => {
+        if (!sharedNaturalWidth) {
+          sharedNaturalWidth = img.naturalWidth;
+          sharedNaturalHeight = img.naturalHeight;
+        }
         if (!els.pages.style.getPropertyValue('--page-ratio')) {
           els.pages.style.setProperty('--page-ratio', `${img.naturalWidth} / ${img.naturalHeight}`);
         }
@@ -413,6 +442,12 @@
     metronomeGain.connect(masterGain);
   }
 
+  function setPlayButtonState(isPlaying) {
+    els.playIcon.innerHTML = isPlaying ? PAUSE_ICON : PLAY_ICON;
+    els.playBtn.title = isPlaying ? 'Pause' : 'Play';
+    els.playBtn.setAttribute('aria-pressed', String(isPlaying));
+  }
+
   function startPlayback() {
     if (audioCtx.state === 'suspended') audioCtx.resume();
     if (startOffset >= duration) startOffset = 0;
@@ -427,7 +462,7 @@
     }
     resetMetronomeSchedule(startOffset);
     playing = true;
-    els.playBtn.textContent = 'Pause';
+    setPlayButtonState(true);
     tickLoop();
   }
 
@@ -439,7 +474,7 @@
       }
       playing = false;
     }
-    els.playBtn.textContent = 'Play';
+    setPlayButtonState(false);
     if (rafHandle) {
       cancelAnimationFrame(rafHandle);
       rafHandle = null;
@@ -529,7 +564,34 @@
 
   // ---------- Cursor sync ----------
 
-  let lastScrolledElId = null;
+  let lastScrolledKey = null; // `${page}:${y}` of the last staff line checked
+
+  // Whether `rect` is vertically visible within `wrapRect` - horizontal
+  // position isn't checked here. At high zoom a staff line is wider than
+  // the viewport, so the cursor legitimately walks off the left/right
+  // edge while playing along a single line; that's normal horizontal
+  // reading, not the user scrolling away, and shouldn't look like the
+  // cursor "wasn't visible" just because of where it sits on the line.
+  function isVisible(rect, wrapRect) {
+    return rect.height <= wrapRect.height
+      ? (rect.top >= wrapRect.top && rect.bottom <= wrapRect.bottom)
+      : Math.abs(rect.top - wrapRect.top) < 1;
+  }
+
+  // The (deltaY, deltaX) to scroll by so `cursorRect` becomes visible:
+  // centered in a dimension where it fits, or - when it's bigger than the
+  // viewport in that dimension - aligned to the near edge so as much as
+  // possible shows, prioritizing the top of the cursor over the bottom
+  // (and the left over the right).
+  function cursorScrollDelta(cursorRect, wrapRect) {
+    const deltaY = cursorRect.height <= wrapRect.height
+      ? cursorRect.top - (wrapRect.top + (wrapRect.height - cursorRect.height) / 2)
+      : cursorRect.top - wrapRect.top;
+    const deltaX = cursorRect.width <= wrapRect.width
+      ? cursorRect.left - (wrapRect.left + (wrapRect.width - cursorRect.width) / 2)
+      : cursorRect.left - wrapRect.left;
+    return { deltaY, deltaX };
+  }
 
   function updateCursor() {
     if (!positions || positions.events.length === 0) return;
@@ -547,36 +609,44 @@
     const elInfo = elementsById.get(activeEvent.elid);
     if (!elInfo) return;
 
+    const page = pageEls[elInfo.page];
+    if (!page) return;
+    const scale = pageScale(page.img);
+    if (!scale) return;
+
+    // The staff (page+y) is changing - in book mode, or on a tall page,
+    // the active note can scroll out of view while still on the same page
+    // as before, which comparing only page indices would miss. Before
+    // moving anything, check whether the cursor - at its OLD position -
+    // was actually on screen: only then do we auto-scroll to follow it to
+    // the new staff. If the user had already scrolled it out of view
+    // (reading ahead/behind on purpose), leave their view alone.
+    const scrollKey = `${elInfo.page}:${elInfo.y}`;
+    const staffChanged = scrollKey !== lastScrolledKey;
+    let wasVisible = false;
+    if (staffChanged) {
+      const prevPage = pageEls.find(p => p.cursorEl.style.display === 'block');
+      if (prevPage) {
+        wasVisible = isVisible(prevPage.cursorEl.getBoundingClientRect(), els.pagesWrap.getBoundingClientRect());
+      }
+      lastScrolledKey = scrollKey;
+    }
+
     pageEls.forEach((p, i) => {
       p.cursorEl.style.display = i === elInfo.page ? 'block' : 'none';
     });
-
-    const page = pageEls[elInfo.page];
-    if (!page) return;
-    // naturalWidth is 0 until the image actually decodes, even though
-    // clientWidth is already nonzero from the CSS aspect-ratio fallback
-    // (see renderPages) - naturalWidth / 0 would be Infinity, not caught
-    // by `|| 0` since Infinity is truthy, so check it explicitly first.
-    const scale = page.img.naturalWidth ? page.img.clientWidth / page.img.naturalWidth : 0;
-    if (!scale) return;
 
     page.cursorEl.style.left = `${elInfo.x * scale}px`;
     page.cursorEl.style.top = `${elInfo.y * scale}px`;
     page.cursorEl.style.width = `${elInfo.sx * scale}px`;
     page.cursorEl.style.height = `${elInfo.sy * scale}px`;
 
-    // Scroll the actual staff into view, not just the page - in book mode
-    // (or on a tall page) the active note can scroll out of view while
-    // still on the same page as before, which comparing only page indices
-    // would miss. Checked once per note change, not every frame, so an
-    // already-visible staff doesn't keep re-triggering scrollIntoView.
-    if (activeEvent.elid !== lastScrolledElId) {
-      lastScrolledElId = activeEvent.elid;
+    if (staffChanged && wasVisible) {
       const wrapRect = els.pagesWrap.getBoundingClientRect();
       const cursorRect = page.cursorEl.getBoundingClientRect();
-      const isVisible = cursorRect.top >= wrapRect.top && cursorRect.bottom <= wrapRect.bottom;
-      if (!isVisible) {
-        page.cursorEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      if (!isVisible(cursorRect, wrapRect)) {
+        const { deltaY, deltaX } = cursorScrollDelta(cursorRect, wrapRect);
+        els.pagesWrap.scrollBy({ top: deltaY, left: deltaX, behavior: 'smooth' });
       }
     }
   }
@@ -603,9 +673,7 @@
 
   function onPageClick(pageIndex, img, e) {
     if (!positions || positions.elements.length === 0) return;
-    // See the identical guard in updateCursor() for why naturalWidth is
-    // checked explicitly rather than relying on `|| 0`.
-    const scale = img.naturalWidth ? img.clientWidth / img.naturalWidth : 0;
+    const scale = pageScale(img);
     if (!scale) return;
 
     const px = e.offsetX / scale;
@@ -669,11 +737,26 @@
   els.viewBookBtn.addEventListener('click', () => setViewMode('book'));
   setViewMode(layoutMode);
 
+  // Keeps the same relative scroll position across a zoom change (as a
+  // fraction of the total scrollable distance in each direction), so
+  // zooming in/out doesn't jump to an earlier/later page.
   function setZoom(level) {
+    const wrap = els.pagesWrap;
+    const oldScrollableY = wrap.scrollHeight - wrap.clientHeight;
+    const oldScrollableX = wrap.scrollWidth - wrap.clientWidth;
+    const fracY = oldScrollableY > 0 ? wrap.scrollTop / oldScrollableY : 0;
+    const fracX = oldScrollableX > 0 ? wrap.scrollLeft / oldScrollableX : 0;
+
     zoomLevel = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level));
     els.pages.style.setProperty('--zoom', zoomLevel);
     els.zoomOutBtn.disabled = zoomLevel <= ZOOM_MIN;
     els.zoomInBtn.disabled = zoomLevel >= ZOOM_MAX;
+
+    const newScrollableY = wrap.scrollHeight - wrap.clientHeight;
+    const newScrollableX = wrap.scrollWidth - wrap.clientWidth;
+    wrap.scrollTop = fracY * newScrollableY;
+    wrap.scrollLeft = fracX * newScrollableX;
+
     updateCursor();
   }
 
@@ -691,9 +774,9 @@
   document.addEventListener('fullscreenchange', () => {
     const on = !!document.fullscreenElement;
     els.fullscreenBtn.classList.toggle('active', on);
+    els.fullscreenBtn.title = on ? 'Exit fullscreen' : 'Fullscreen';
     els.fullscreenBtn.setAttribute('aria-pressed', String(on));
-    els.maximizeIcon.hidden = on;
-    els.minimizeIcon.hidden = !on;
+    els.fullscreenIcon.innerHTML = on ? MINIMIZE_ICON : MAXIMIZE_ICON;
   });
 
   function setMixerOpen(open) {

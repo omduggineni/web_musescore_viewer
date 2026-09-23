@@ -108,6 +108,14 @@ body {
   color: #fff;
 }
 
+/* The transport's main action - always accent-colored, not just when
+   "active" like the other icon-btn toggles. */
+#playBtn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .segmented {
   display: flex;
   border: 1px solid var(--border);
@@ -164,7 +172,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  align-items: center;
+  /* "safe" keeps the whole page reachable by scrolling once a zoomed page
+     is wider than #pagesWrap - plain `center` on an overflowing flex item
+     clips the overflow on one side instead of letting it scroll there. */
+  align-items: safe center;
   width: 100%;
 }
 
@@ -317,21 +328,6 @@ body {
   padding: 0.6rem 1rem;
   background: var(--panel);
   border-top: 1px solid var(--border);
-}
-
-#playBtn {
-  font-size: 0.9rem;
-  padding: 0.4rem 1.1rem;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-}
-
-#playBtn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 #seek {
