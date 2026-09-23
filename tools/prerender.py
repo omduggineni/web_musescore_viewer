@@ -34,11 +34,13 @@ just the score's initial/nominal marking).
 import base64
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import mido
@@ -46,6 +48,11 @@ import mido
 ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = ROOT / "scores"
 OUT_DIR = ROOT / "dist" / "scores"
+
+# Each part renders via its own `mscore` subprocess, so these run fine in
+# parallel threads (the GIL is released while waiting on the subprocess).
+# Leave one core free for the rest of the system.
+MAX_WORKERS = max(1, (os.cpu_count() or 2) - 1)
 
 
 def run_score_media(mscz_path: Path) -> dict:
@@ -72,8 +79,7 @@ def run_score_parts(mscz_path: Path) -> list[tuple[str, bytes]]:
     ]
 
 
-def render_part_audio(part_mscz_bytes: bytes, out_mp3: Path, workdir: Path):
-    part_mscz_path = workdir / "part.mscz"
+def render_part_audio(part_mscz_bytes: bytes, part_mscz_path: Path, out_mp3: Path):
     part_mscz_path.write_bytes(part_mscz_bytes)
     # mscore frequently SIGABRTs on exit (crash-reporter/MuseSampler cleanup)
     # *after* successfully writing its output - verified repeatedly earlier
@@ -166,20 +172,32 @@ def process_score(score_id: str, title_override: str | None = None):
     tempo_map = extract_tempo_map(midi_bytes)
     (out_dir / "tempo-map.json").write_text(json.dumps(tempo_map))
 
-    print(f"[{score_id}] running mscore --score-parts + rendering audio ...")
     parts = run_score_parts(src)
-    tracks_meta = []
+    workers = min(MAX_WORKERS, len(parts)) or 1
+    print(f"[{score_id}] running mscore --score-parts + rendering audio ({workers} parallel) ...")
+    tracks_meta = [None] * len(parts)
     with tempfile.TemporaryDirectory() as td:
         workdir = Path(td)
-        for order, (name, part_bytes) in enumerate(parts):
+
+        def render(order, name, part_bytes):
             slug = slugify(name)
             mp3_path = tracks_dir / f"{slug}.mp3"
-            render_part_audio(part_bytes, mp3_path, workdir)
-            tracks_meta.append({
-                "id": slug, "name": name, "order": order,
-                "file": f"tracks/{slug}.mp3",
-            })
-            print(f"    - {name} -> {mp3_path.name}")
+            part_mscz_path = workdir / f"part-{order}.mscz"
+            render_part_audio(part_bytes, part_mscz_path, mp3_path)
+            return order, name, slug, mp3_path
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(render, order, name, part_bytes)
+                for order, (name, part_bytes) in enumerate(parts)
+            ]
+            for future in as_completed(futures):
+                order, name, slug, mp3_path = future.result()
+                tracks_meta[order] = {
+                    "id": slug, "name": name, "order": order,
+                    "file": f"tracks/{slug}.mp3",
+                }
+                print(f"    - {name} -> {mp3_path.name}")
 
     meta = media["metadata"]
     score_meta = {
