@@ -12,7 +12,21 @@
       <span id="scoreTitle"></span>
       <span id="scoreComposer"></span>
     </div>
-    <div id="rightControls">
+    <!-- Below 700px there isn't room for title + composer + all these
+         controls on one line, so the composer is dropped (see style.css)
+         and the controls collapse behind this menu button instead - opens
+         #rightControls as a real second row of the bar, not an overlay.
+         Above that width the button is hidden and #rightControls is
+         forced always-visible, unstyled, inline (today's desktop look). -->
+    <button id="menuBtn" type="button" class="icon-btn" title="More controls" aria-haspopup="true" aria-expanded="false">
+      <!-- Lucide "menu" icon - https://lucide.dev/icons/menu (ISC license) -->
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 5h16" />
+        <path d="M4 12h16" />
+        <path d="M4 19h16" />
+      </svg>
+    </button>
+    <div id="rightControls" hidden>
       <div id="tempoGroup" class="dropdown">
         <!-- Tempo readout doubles as the control: click it to reveal a
              slider (below) that adjusts playback speed - the label always

@@ -2,8 +2,11 @@
   'use strict';
 
   const els = {
+    topbar: document.getElementById('topbar'),
     title: document.getElementById('scoreTitle'),
     composer: document.getElementById('scoreComposer'),
+    menuBtn: document.getElementById('menuBtn'),
+    rightControls: document.getElementById('rightControls'),
     tempoBtn: document.getElementById('tempoBtn'),
     tempoPanel: document.getElementById('tempoPanel'),
     tempoLabel: document.getElementById('tempoLabel'),
@@ -185,6 +188,7 @@
 
     els.title.textContent = meta.title;
     els.composer.textContent = meta.composer || '';
+    layoutTopbar();
 
     speed = 1;
     els.speedSlider.value = 1;
@@ -772,22 +776,63 @@
   els.mixerToggleBtn.addEventListener('click', () => setMixerOpen(!mixerOpen));
   setMixerOpen(mixerOpen);
 
-  // Tempo/speed dropdown: metronome toggle + speed slider, tucked behind the
-  // tempo readout button instead of sitting in the topbar all the time.
-  function setTempoPanelOpen(open) {
-    els.tempoPanel.hidden = !open;
-    els.tempoBtn.setAttribute('aria-expanded', String(open));
+  // Click-to-open dropdowns: the tempo/speed panel, and (below 700px,
+  // where #rightControls becomes a real toggled dropdown instead of its
+  // normal always-visible desktop layout) the menu holding every other
+  // control. Returns a setter so all open dropdowns can be closed
+  // together (click-outside, Escape).
+  function makeDropdown(btn, panel) {
+    function setOpen(open) {
+      panel.hidden = !open;
+      btn.setAttribute('aria-expanded', String(open));
+    }
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setOpen(panel.hidden);
+    });
+    panel.addEventListener('click', (e) => e.stopPropagation());
+    return setOpen;
   }
 
-  els.tempoBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    setTempoPanelOpen(els.tempoPanel.hidden);
+  const setTempoPanelOpen = makeDropdown(els.tempoBtn, els.tempoPanel);
+  const setMenuOpen = makeDropdown(els.menuBtn, els.rightControls);
+
+  document.addEventListener('click', () => {
+    setTempoPanelOpen(false);
+    setMenuOpen(false);
   });
-  els.tempoPanel.addEventListener('click', (e) => e.stopPropagation());
-  document.addEventListener('click', () => setTempoPanelOpen(false));
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') setTempoPanelOpen(false);
+    if (e.key === 'Escape') {
+      setTempoPanelOpen(false);
+      setMenuOpen(false);
+    }
   });
+
+  // Steps #topbar down through two fallbacks as content actually stops
+  // fitting - not tied to a device breakpoint, since what fits depends on
+  // the current title/composer text length as much as the window width.
+  // Each check re-measures with the *previous* step already applied, so a
+  // long score title alone can trigger the composer to hide, or even the
+  // controls to collapse, well above any "mobile" width.
+  function layoutTopbar() {
+    const topbar = els.topbar;
+    const wasCollapsed = topbar.classList.contains('collapse-controls');
+    topbar.classList.remove('hide-composer', 'collapse-controls');
+
+    if (topbar.scrollWidth > topbar.clientWidth) {
+      topbar.classList.add('hide-composer');
+    }
+    if (topbar.scrollWidth > topbar.clientWidth) {
+      topbar.classList.add('collapse-controls');
+      if (!wasCollapsed) {
+        // Just started collapsing - start with the menu closed rather than
+        // carrying over whatever `hidden` happened to be left at before.
+        setMenuOpen(false);
+      }
+    }
+  }
+
+  window.addEventListener('resize', layoutTopbar);
 
   function setMetronomeOn(on) {
     metronomeOn = on;

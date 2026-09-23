@@ -24,6 +24,12 @@ body {
   flex-direction: column;
 }
 
+/* No wrapping - overflow is handled by layoutTopbar() in app.js stepping
+   #topbar through hide-composer/collapse-controls instead, so it reacts to
+   actual content width (a long title+composer, a narrow window) rather
+   than a fixed device breakpoint. Wrap turns back on once collapsed (see
+   .collapse-controls below), which is what actually pushes #rightControls
+   onto its own second row of the bar. */
 #topbar {
   display: flex;
   align-items: center;
@@ -31,30 +37,88 @@ body {
   padding: 0.6rem 1rem;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  flex-wrap: nowrap;
+}
+
+#topbar.collapse-controls {
   flex-wrap: wrap;
 }
 
+/* Rigid (no shrinking, no wrapping) so layoutTopbar() can measure #topbar's
+   true natural content width via scrollWidth - only .collapse-controls
+   below relaxes #scoreTitle back to shrink+ellipsis, once title + a bare
+   menu button is genuinely all that's left to fit. */
 #scoreInfo {
   display: flex;
   gap: 0.6rem;
   align-items: baseline;
+  flex-shrink: 0;
 }
 
 #scoreTitle {
   font-weight: 600;
   font-size: 1.05rem;
+  white-space: nowrap;
 }
 
 #scoreComposer {
   color: var(--text-dim);
   font-size: 0.9rem;
+  white-space: nowrap;
 }
 
-#rightControls {
+/* No menu button, #rightControls shown plain and inline regardless of its
+   `hidden` attribute (that attribute only matters once .collapse-controls
+   below turns this into a real second row of the bar). */
+#menuBtn {
+  display: none;
+}
+
+#rightControls,
+#rightControls[hidden] {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 1rem;
+  flex-shrink: 0;
+}
+
+/* layoutTopbar() (app.js) toggles these two classes on #topbar after
+   measuring actual content width - hiding the composer first, and only
+   collapsing the controls into the menu if that alone still isn't enough. */
+#topbar.hide-composer #scoreComposer {
+  display: none;
+}
+
+#topbar.collapse-controls #scoreInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+#topbar.collapse-controls #scoreTitle {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#topbar.collapse-controls #menuBtn {
+  display: inline-flex;
+  margin-left: auto;
+}
+
+/* A real second row of the navbar (not an overlay/dropdown) - #topbar's
+   own `flex-wrap: wrap` above (only active in this state) is what forces
+   this onto its own line, since flex-basis: 100% leaves no room for it
+   alongside title + menu button on the first line. */
+#topbar.collapse-controls #rightControls {
+  flex-basis: 100%;
+  margin-left: 0;
+  justify-content: flex-start;
+}
+
+#topbar.collapse-controls #rightControls[hidden] {
+  display: none;
 }
 
 .dropdown {
@@ -372,6 +436,41 @@ body {
 }
 
 @media (max-width: 700px) {
-  #main { flex-direction: column; }
-  #mixer { width: auto; border-left: none; border-top: 1px solid var(--border); }
+  /* Book view needs real width for two side-by-side pages to be legible -
+     not viable on a phone screen, so only offer centered view there
+     (unrelated to layoutTopbar()'s content-width collapsing above - this
+     is a capability call based on screen size, not a fit problem). */
+  #viewToggle {
+    display: none;
+  }
+
+  /* One shared scroll region for the score pages + mixer stacked
+     together, same as the single #pagesWrap/#mixer scroll each already
+     gets on desktop - instead of each having its own separate (and
+     glitchy) internal scrollbar while nested in a fixed-height column. */
+  #main {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  #pagesWrap {
+    flex: none;
+    overflow: visible;
+  }
+
+  #mixer {
+    flex: none;
+    width: auto;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    overflow: visible;
+  }
+
+  #topbar {
+    gap: 0.6rem;
+  }
+
+  #rightControls {
+    justify-content: flex-start;
+  }
 }
