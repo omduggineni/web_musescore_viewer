@@ -24,6 +24,13 @@ jobs:
         run: |
           cp "$GITHUB_WORKSPACE/overlay/viewer.html" src/web/appjs/viewer/viewer.html
           cp "$GITHUB_WORKSPACE/overlay/web-appshell-CMakeLists.txt" src/web/appshell/CMakeLists.txt
+          # The engraving plugin scripting API (api/v1) isn't wasm-compatible (it
+          # subclasses QProcess, which Qt's wasm port doesn't support - see
+          # QT_QPROCESS_SUPPORTED OFF in SetupConfigure.cmake) and isn't needed
+          # since this build has no plugin support. Skip it for wasm only; every
+          # other engraving/internal source in that block is left untouched.
+          sed -i 's/^    include(api\/v1\/api_v1.cmake)$/    if (NOT OS_IS_WASM)\n        include(api\/v1\/api_v1.cmake)\n    endif()/' src/engraving/CMakeLists.txt
+          grep -n "api_v1.cmake" src/engraving/CMakeLists.txt
 
       - name: Configure workflow
         run: |
