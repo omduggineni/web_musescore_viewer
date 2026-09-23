@@ -10,6 +10,11 @@
     speedValue: document.getElementById('speedValue'),
     viewCenteredBtn: document.getElementById('viewCenteredBtn'),
     viewBookBtn: document.getElementById('viewBookBtn'),
+    zoomOutBtn: document.getElementById('zoomOutBtn'),
+    zoomInBtn: document.getElementById('zoomInBtn'),
+    fullscreenBtn: document.getElementById('fullscreenBtn'),
+    maximizeIcon: document.getElementById('maximizeIcon'),
+    minimizeIcon: document.getElementById('minimizeIcon'),
     mixer: document.getElementById('mixer'),
     mixerToggleBtn: document.getElementById('mixerToggleBtn'),
     pagesWrap: document.getElementById('pagesWrap'),
@@ -32,6 +37,10 @@
   const isFirefox = /firefox/i.test(navigator.userAgent);
   const FIREFOX_BUG_URL = 'https://bugzilla.mozilla.org/show_bug.cgi?id=1517199';
 
+  const ZOOM_STEP = 0.15;
+  const ZOOM_MIN = 0.55;
+  const ZOOM_MAX = 2.5;
+
   /** @type {AudioContext|null} */
   let audioCtx = null;
   let masterGain = null;
@@ -46,6 +55,7 @@
   let nextBeatIndex = 0;     // metronome scheduler's position in beatMap
   let metronomeOn = false;
   let mixerOpen = true;
+  let zoomLevel = 1;
   let pageEls = [];          // [{el, img, cursorEl}]
   /** @type {IntersectionObserver|null} */
   let pageObserver = null;   // lazy-loads/unloads page images as they scroll
@@ -519,7 +529,7 @@
 
   // ---------- Cursor sync ----------
 
-  let lastActivePage = -1;
+  let lastScrolledElId = null;
 
   function updateCursor() {
     if (!positions || positions.events.length === 0) return;
@@ -543,7 +553,11 @@
 
     const page = pageEls[elInfo.page];
     if (!page) return;
-    const scale = page.img.clientWidth / page.img.naturalWidth || 0;
+    // naturalWidth is 0 until the image actually decodes, even though
+    // clientWidth is already nonzero from the CSS aspect-ratio fallback
+    // (see renderPages) - naturalWidth / 0 would be Infinity, not caught
+    // by `|| 0` since Infinity is truthy, so check it explicitly first.
+    const scale = page.img.naturalWidth ? page.img.clientWidth / page.img.naturalWidth : 0;
     if (!scale) return;
 
     page.cursorEl.style.left = `${elInfo.x * scale}px`;
@@ -551,9 +565,19 @@
     page.cursorEl.style.width = `${elInfo.sx * scale}px`;
     page.cursorEl.style.height = `${elInfo.sy * scale}px`;
 
-    if (elInfo.page !== lastActivePage) {
-      lastActivePage = elInfo.page;
-      page.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // Scroll the actual staff into view, not just the page - in book mode
+    // (or on a tall page) the active note can scroll out of view while
+    // still on the same page as before, which comparing only page indices
+    // would miss. Checked once per note change, not every frame, so an
+    // already-visible staff doesn't keep re-triggering scrollIntoView.
+    if (activeEvent.elid !== lastScrolledElId) {
+      lastScrolledElId = activeEvent.elid;
+      const wrapRect = els.pagesWrap.getBoundingClientRect();
+      const cursorRect = page.cursorEl.getBoundingClientRect();
+      const isVisible = cursorRect.top >= wrapRect.top && cursorRect.bottom <= wrapRect.bottom;
+      if (!isVisible) {
+        page.cursorEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
     }
   }
 
@@ -579,7 +603,9 @@
 
   function onPageClick(pageIndex, img, e) {
     if (!positions || positions.elements.length === 0) return;
-    const scale = img.clientWidth / img.naturalWidth;
+    // See the identical guard in updateCursor() for why naturalWidth is
+    // checked explicitly rather than relying on `|| 0`.
+    const scale = img.naturalWidth ? img.clientWidth / img.naturalWidth : 0;
     if (!scale) return;
 
     const px = e.offsetX / scale;
@@ -592,25 +618,6 @@
 
     ensureAudioCtx();
     seekTo(ms / 1000);
-  }
-
-  // Pauses and steps the playhead to the previous/next note event
-  // (direction -1/+1), relative to whichever event is currently active -
-  // same "last event with position <= now" lookup updateCursor() uses.
-  function stepNote(direction) {
-    if (!positions || positions.events.length === 0) return;
-    const events = positions.events;
-    const tMs = getCurrentTime() * 1000;
-    let lo = 0, hi = events.length - 1, idx = 0;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (events[mid].position <= tMs) { idx = mid; lo = mid + 1; }
-      else hi = mid - 1;
-    }
-    const newIdx = Math.min(events.length - 1, Math.max(0, idx + direction));
-    ensureAudioCtx();
-    stopPlayback();
-    seekTo(events[newIdx].position / 1000);
   }
 
   // Scrolls by one screenful of the visible area (direction -1/+1) - same
@@ -662,6 +669,33 @@
   els.viewBookBtn.addEventListener('click', () => setViewMode('book'));
   setViewMode(layoutMode);
 
+  function setZoom(level) {
+    zoomLevel = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level));
+    els.pages.style.setProperty('--zoom', zoomLevel);
+    els.zoomOutBtn.disabled = zoomLevel <= ZOOM_MIN;
+    els.zoomInBtn.disabled = zoomLevel >= ZOOM_MAX;
+    updateCursor();
+  }
+
+  els.zoomOutBtn.addEventListener('click', () => setZoom(zoomLevel - ZOOM_STEP));
+  els.zoomInBtn.addEventListener('click', () => setZoom(zoomLevel + ZOOM_STEP));
+  setZoom(zoomLevel);
+
+  function setFullscreen(on) {
+    if (on) document.documentElement.requestFullscreen().catch(() => {});
+    else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
+
+  els.fullscreenBtn.addEventListener('click', () => setFullscreen(!document.fullscreenElement));
+
+  document.addEventListener('fullscreenchange', () => {
+    const on = !!document.fullscreenElement;
+    els.fullscreenBtn.classList.toggle('active', on);
+    els.fullscreenBtn.setAttribute('aria-pressed', String(on));
+    els.maximizeIcon.hidden = on;
+    els.minimizeIcon.hidden = !on;
+  });
+
   function setMixerOpen(open) {
     mixerOpen = open;
     els.mixer.hidden = !open;
@@ -687,10 +721,10 @@
 
   window.addEventListener('resize', updateCursor);
 
-  // Keyboard shortcuts: space play/pause, left/right pause+step one note,
-  // page up/down (same as Fn+up/Fn+down on a Mac keyboard - the browser
-  // reports those identically as "PageUp"/"PageDown") scroll a page, M
-  // toggles the metronome. Skipped while a form control has focus (e.g. a
+  // Keyboard shortcuts: space play/pause, page up/down (same as
+  // Fn+up/Fn+down on a Mac keyboard - the browser reports those
+  // identically as "PageUp"/"PageDown") scroll a page, M toggles the
+  // metronome. Skipped while a form control has focus (e.g. a
   // mixer slider), so its own native arrow-key/space handling still works,
   // and skipped for any shortcut-style modifier combo (ctrl/meta/alt).
   window.addEventListener('keydown', (e) => {
@@ -704,14 +738,6 @@
         e.preventDefault();
         ensureAudioCtx();
         if (playing) stopPlayback(); else startPlayback();
-        break;
-      case 'ArrowLeft':
-        e.preventDefault();
-        stepNote(-1);
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        stepNote(1);
         break;
       case 'PageUp':
         e.preventDefault();

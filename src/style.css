@@ -139,6 +139,12 @@ body {
   color: #fff;
 }
 
+.icon-btn:disabled,
+.segmented .segment:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 #main {
   flex: 1;
   display: flex;
@@ -154,6 +160,7 @@ body {
 }
 
 #pages {
+  --zoom: 1;
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
@@ -161,19 +168,23 @@ body {
   width: 100%;
 }
 
-/* Centered: one page per row, capped to a comfortable reading width. */
+/* Centered: one page per row, capped to a comfortable reading width -
+   scaled by --zoom (see setZoom() in app.js). Dropping the min()'s
+   100% cap above 1x zoom lets a page get wider than #pagesWrap, which is
+   fine - it scrolls (#pagesWrap has overflow:auto). */
 #pages.layout-centered .page {
-  width: min(900px, 100%);
+  width: calc(min(900px, 100%) * var(--zoom));
 }
 
-/* Book: two-page spreads, each page sized to fit the spread rather than a
-   fixed cap. */
+/* Book: two-page spreads. A flex item's auto width can't exceed the space
+   available in its container (fit-content is still bounded by it), so an
+   explicit width is needed for --zoom to be able to grow it past that -
+   same min(cap, 100%) * zoom pattern as centered mode above. */
 #pages.layout-book .spread {
   display: flex;
   justify-content: center;
   gap: 1rem;
-  width: 100%;
-  max-width: 1400px;
+  width: calc(min(1400px, 100%) * var(--zoom));
 }
 
 /* A lone trailing page's spread has an invisible same-sized placeholder in
@@ -186,7 +197,7 @@ body {
 #pages.layout-book .spread .page {
   flex: 1 1 0;
   min-width: 0;
-  max-width: 640px;
+  max-width: calc(640px * var(--zoom));
 }
 
 .page {

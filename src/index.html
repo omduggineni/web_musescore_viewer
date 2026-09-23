@@ -46,6 +46,41 @@
           </svg>
         </button>
       </div>
+      <div id="zoomGroup" class="segmented">
+        <button id="zoomOutBtn" type="button" class="segment" title="Zoom out">
+          <!-- Lucide "zoom-out" icon - https://lucide.dev/icons/zoom-out (ISC license) -->
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" x2="16.65" y1="21" y2="16.65" />
+            <line x1="8" x2="14" y1="11" y2="11" />
+          </svg>
+        </button>
+        <button id="zoomInBtn" type="button" class="segment" title="Zoom in">
+          <!-- Lucide "zoom-in" icon - https://lucide.dev/icons/zoom-in (ISC license) -->
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" x2="16.65" y1="21" y2="16.65" />
+            <line x1="11" x2="11" y1="8" y2="14" />
+            <line x1="8" x2="14" y1="11" y2="11" />
+          </svg>
+        </button>
+      </div>
+      <button id="fullscreenBtn" type="button" class="icon-btn" title="Fullscreen" aria-pressed="false">
+        <!-- Lucide "maximize" icon - https://lucide.dev/icons/maximize (ISC license) -->
+        <svg id="maximizeIcon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+          <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+          <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+          <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+        </svg>
+        <!-- Lucide "minimize" icon - https://lucide.dev/icons/minimize (ISC license) -->
+        <svg id="minimizeIcon" hidden viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+          <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+          <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+          <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+        </svg>
+      </button>
       <button id="mixerToggleBtn" type="button" class="icon-btn" title="Toggle mixer" aria-pressed="true">
         <!-- Lucide "sliders-horizontal" icon - https://lucide.dev/icons/sliders-horizontal (ISC license) -->
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
