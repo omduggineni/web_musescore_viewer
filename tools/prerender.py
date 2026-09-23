@@ -27,9 +27,10 @@ For each score listed in scores/manifest.json, this:
      copies src/ (the site itself) into dist/ before running this.
 
 Requires on PATH: mscore (MuseScore 4 CLI). Also requires the `mido`
-Python package, used only to build a tempo-change map from the MIDI export
-(so the player can show the tempo actually in effect at the playhead, not
-just the score's initial/nominal marking).
+Python package, used to build a tempo-change map and a per-beat map (with
+downbeats flagged, for the mixer's metronome) from the MIDI export - so the
+player can show the tempo actually in effect at the playhead, not just the
+score's initial/nominal marking.
 """
 import base64
 import io
@@ -140,6 +141,51 @@ def extract_tempo_map(midi_bytes: bytes) -> list[dict]:
     return tempo_map
 
 
+def build_beat_map(midi_bytes: bytes, duration: float) -> list[dict]:
+    """[{time (sec), downbeat: bool}, ...] for every beat in the piece,
+    driving the mixer's metronome. MuseScore's MIDI export always places a
+    time_signature meta message exactly on a barline, so the meter is
+    constant between one and the next; tempo can still change within that
+    span (rit., accel.), so beats are generated one at a time using
+    whatever tempo is active at each beat's own start."""
+    mid = mido.MidiFile(file=io.BytesIO(midi_bytes))
+
+    tempo_changes = []  # [(time, seconds per quarter note)], sorted by time
+    timesig_changes = []  # [(time, numerator, denominator)], sorted by time
+    cur_tempo = 500000  # MIDI default, 120 BPM
+    cur_time = 0.0
+    for msg in mid.tracks[0]:
+        cur_time += mido.tick2second(msg.time, mid.ticks_per_beat, cur_tempo)
+        if msg.type == "set_tempo":
+            cur_tempo = msg.tempo
+            tempo_changes.append((cur_time, cur_tempo / 1_000_000))
+        elif msg.type == "time_signature":
+            timesig_changes.append((cur_time, msg.numerator, msg.denominator))
+    if not tempo_changes or tempo_changes[0][0] > 0:
+        tempo_changes.insert(0, (0.0, 0.5))
+    if not timesig_changes or timesig_changes[0][0] > 0:
+        timesig_changes.insert(0, (0.0, 4, 4))
+
+    def quarter_seconds_at(t):
+        q = tempo_changes[0][1]
+        for ts, qs in tempo_changes:
+            if ts > t:
+                break
+            q = qs
+        return q
+
+    beats = []
+    for i, (span_start, numerator, denominator) in enumerate(timesig_changes):
+        span_end = timesig_changes[i + 1][0] if i + 1 < len(timesig_changes) else duration
+        t = span_start
+        beat_in_measure = 0
+        while t < span_end - 1e-6:
+            beats.append({"time": round(t, 3), "downbeat": beat_in_measure == 0})
+            t += quarter_seconds_at(t) * 4 / denominator
+            beat_in_measure = (beat_in_measure + 1) % numerator
+    return beats
+
+
 def slugify(name: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip().lower()).strip("-")
     return s or "track"
@@ -171,6 +217,8 @@ def process_score(score_id: str, title_override: str | None = None):
     (out_dir / "score.mid").write_bytes(midi_bytes)
     tempo_map = extract_tempo_map(midi_bytes)
     (out_dir / "tempo-map.json").write_text(json.dumps(tempo_map))
+    beat_map = build_beat_map(midi_bytes, media["metadata"].get("duration", 0))
+    (out_dir / "beats.json").write_text(json.dumps(beat_map))
 
     parts = run_score_parts(src)
     workers = min(MAX_WORKERS, len(parts)) or 1

@@ -151,6 +151,13 @@ body {
   display: block;
   width: 100%;
   height: auto;
+  /* Reserves the right box size even when unloaded (no src) - see
+     renderPages() in app.js, which sets this once the real size is known.
+     The fallback (~a portrait letter/A4 page) matters even before that:
+     without it every page collapses to 0 height at once, which makes the
+     lazy-load IntersectionObserver see all of them as "in view". */
+  aspect-ratio: var(--page-ratio, 0.75);
+  background: var(--bg);
   cursor: pointer;
 }
 

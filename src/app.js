@@ -8,6 +8,7 @@
     speedSlider: document.getElementById('speedSlider'),
     speedValue: document.getElementById('speedValue'),
     viewModeBtn: document.getElementById('viewModeBtn'),
+    pagesWrap: document.getElementById('pagesWrap'),
     pages: document.getElementById('pages'),
     channels: document.getElementById('channels'),
     playBtn: document.getElementById('playBtn'),
@@ -25,6 +26,7 @@
   // Firefox, we just disable the speed control there - see wireSpeedSlider.
   const isFirefox = /firefox/i.test(navigator.userAgent);
   const FIREFOX_BUG_URL = 'https://bugzilla.mozilla.org/show_bug.cgi?id=1517199';
+  const METRONOME_ID = '__metronome__';
 
   /** @type {AudioContext|null} */
   let audioCtx = null;
@@ -35,7 +37,11 @@
   let elementsById = null;   // Map<id, element>
   let eventPositionByElId = null; // Map<elementId, ms>
   let tempoMap = [];         // [{time (sec), bpm}, ...] sorted by time
+  let beatMap = [];          // [{time (sec), downbeat}, ...] sorted by time
+  let nextBeatIndex = 0;     // metronome scheduler's position in beatMap
   let pageEls = [];          // [{el, img, cursorEl}]
+  /** @type {IntersectionObserver|null} */
+  let pageObserver = null;   // lazy-loads/unloads page images as they scroll
 
   /** @type {Map<string, {audioEl:HTMLAudioElement, gain:GainNode, panner:StereoPannerNode,
    *   volume:number, pan:number, muted:boolean, solo:boolean}>} */
@@ -145,14 +151,17 @@
     els.timeLabel.textContent = '0:00 / 0:00';
 
     const base = `scores/${id}/`;
-    const [meta, pos, tempos] = await Promise.all([
+    const [meta, pos, tempos, beats] = await Promise.all([
       fetch(base + 'meta.json').then(r => r.json()),
       fetch(base + 'positions.json').then(r => r.json()),
       fetch(base + 'tempo-map.json').then(r => r.json()),
+      fetch(base + 'beats.json').then(r => r.json()),
     ]);
     currentScore = meta;
     positions = pos;
     tempoMap = tempos;
+    beatMap = beats;
+    nextBeatIndex = 0;
     elementsById = new Map(positions.elements.map(e => [e.id, e]));
     eventPositionByElId = new Map(positions.events.map(e => [e.elid, e.position]));
     duration = meta.duration || 0;
@@ -177,17 +186,34 @@
     history.replaceState(null, '', url);
   }
 
+  // Pages are typically full-resolution PNGs a couple MB each, and a long
+  // score can have dozens - loading them all upfront wastes bandwidth and
+  // memory for pages nobody's looking at. Each <img> holds its real URL in
+  // data-src until an IntersectionObserver says it's near the visible
+  // area, and loses its src again once scrolled well away.
+  const PAGE_LOAD_MARGIN = '600px 0px';
+
   function renderPages(base, npages) {
+    if (pageObserver) pageObserver.disconnect();
+    els.pages.style.removeProperty('--page-ratio');
     pageEls = [];
     for (let i = 0; i < npages; i++) {
       const pageDiv = document.createElement('div');
       pageDiv.className = 'page';
 
       const img = document.createElement('img');
-      img.src = base + `page-${i}.png`;
+      img.dataset.src = base + `page-${i}.png`;
       img.alt = `Page ${i + 1}`;
       img.draggable = false;
       img.addEventListener('click', (e) => onPageClick(i, img, e));
+      // Once we know one page's aspect ratio, apply it to all of them so
+      // an unloaded (src-less) page still reserves the right amount of
+      // space instead of collapsing and jumping the scroll position.
+      img.addEventListener('load', () => {
+        if (!els.pages.style.getPropertyValue('--page-ratio')) {
+          els.pages.style.setProperty('--page-ratio', `${img.naturalWidth} / ${img.naturalHeight}`);
+        }
+      }, { once: true });
 
       const cursorEl = document.createElement('div');
       cursorEl.className = 'cursor-hl';
@@ -196,7 +222,25 @@
       pageDiv.appendChild(cursorEl);
       pageEls.push({ el: pageDiv, img, cursorEl });
     }
-    applyLayout();
+
+    applyLayout(); // attach to the DOM first, so intersection checks see real layout
+
+    pageObserver = new IntersectionObserver(onPageVisibilityChange, {
+      root: els.pagesWrap,
+      rootMargin: PAGE_LOAD_MARGIN,
+    });
+    for (const p of pageEls) pageObserver.observe(p.img);
+  }
+
+  function onPageVisibilityChange(entries) {
+    for (const entry of entries) {
+      const img = entry.target;
+      if (entry.isIntersecting) {
+        if (!img.getAttribute('src')) img.src = img.dataset.src;
+      } else if (img.getAttribute('src')) {
+        img.removeAttribute('src');
+      }
+    }
   }
 
   // Re-parents the existing page elements into the current layout (does not
@@ -233,64 +277,86 @@
     updateCursor();
   }
 
+  // Builds one mixer channel (name, volume, pan, mute, solo) and registers
+  // its state in `tracks`. Used identically for the metronome and for real
+  // instrument tracks, so they share one control box and one mute/solo
+  // implementation - the metronome is just a track with no <audio> element,
+  // whose "source" is the oscillator clicks scheduleMetronome() plays into
+  // its panner node.
+  function createChannel(id, name, initialVolume, initialMuted = false) {
+    const state = {
+      audioEl: null, gain: null, panner: null,
+      volume: initialVolume, pan: 0, muted: initialMuted, solo: false,
+    };
+    tracks.set(id, state);
+
+    const ch = document.createElement('div');
+    ch.className = 'channel';
+    ch.innerHTML = `
+      <div class="channel-name" title="${name}">${name}</div>
+      <div class="channel-row">
+        <label>Vol</label>
+        <input type="range" min="0" max="1" step="0.01" value="${state.volume}" data-role="volume">
+      </div>
+      <div class="channel-row">
+        <label>Pan</label>
+        <input type="range" min="-1" max="1" step="0.01" value="0" data-role="pan">
+      </div>
+      <div class="channel-toggles">
+        <button type="button" class="toggle-btn${initialMuted ? ' active-mute' : ''}" data-role="mute">Mute</button>
+        <button type="button" class="toggle-btn" data-role="solo">Solo</button>
+      </div>
+    `;
+    els.channels.appendChild(ch);
+
+    const volumeInput = ch.querySelector('[data-role="volume"]');
+    const panInput = ch.querySelector('[data-role="pan"]');
+    const muteBtn = ch.querySelector('[data-role="mute"]');
+    const soloBtn = ch.querySelector('[data-role="solo"]');
+
+    volumeInput.addEventListener('input', () => {
+      state.volume = parseFloat(volumeInput.value);
+      applyGain(id, state);
+    });
+    panInput.addEventListener('input', () => {
+      state.pan = parseFloat(panInput.value);
+      if (state.panner) state.panner.pan.value = state.pan;
+    });
+    muteBtn.addEventListener('click', () => {
+      state.muted = !state.muted;
+      if (state.muted && state.solo) {
+        state.solo = false;
+        soloBtn.classList.remove('active-solo');
+      }
+      muteBtn.classList.toggle('active-mute', state.muted);
+      refreshAllGains();
+    });
+    soloBtn.addEventListener('click', () => {
+      state.solo = !state.solo;
+      if (state.solo && state.muted) {
+        state.muted = false;
+        muteBtn.classList.remove('active-mute');
+      }
+      soloBtn.classList.toggle('active-solo', state.solo);
+      refreshAllGains();
+    });
+
+    return state;
+  }
+
   function renderMixer(trackMetas) {
+    ensureAudioCtx();
+    const metronome = createChannel(METRONOME_ID, 'Metronome', 0.5, true);
+    const panner = audioCtx.createStereoPanner();
+    const gain = audioCtx.createGain();
+    panner.connect(gain);
+    gain.connect(masterGain);
+    metronome.panner = panner;
+    metronome.gain = gain;
+    applyGain(METRONOME_ID, metronome);
+
     for (const tm of trackMetas) {
-      const state = {
-        audioEl: null, gain: null, panner: null,
-        volume: 0.85, pan: 0, muted: false, solo: false,
-      };
-      tracks.set(tm.id, state);
-
-      const ch = document.createElement('div');
-      ch.className = 'channel';
-      ch.innerHTML = `
-        <div class="channel-name" title="${tm.name}">${tm.name}</div>
-        <div class="channel-row">
-          <label>Vol</label>
-          <input type="range" min="0" max="1" step="0.01" value="${state.volume}" data-role="volume">
-        </div>
-        <div class="channel-row">
-          <label>Pan</label>
-          <input type="range" min="-1" max="1" step="0.01" value="0" data-role="pan">
-        </div>
-        <div class="channel-toggles">
-          <button type="button" class="toggle-btn" data-role="mute">Mute</button>
-          <button type="button" class="toggle-btn" data-role="solo">Solo</button>
-        </div>
-      `;
-      els.channels.appendChild(ch);
-
-      const volumeInput = ch.querySelector('[data-role="volume"]');
-      const panInput = ch.querySelector('[data-role="pan"]');
-      const muteBtn = ch.querySelector('[data-role="mute"]');
-      const soloBtn = ch.querySelector('[data-role="solo"]');
-
-      volumeInput.addEventListener('input', () => {
-        state.volume = parseFloat(volumeInput.value);
-        applyGain(tm.id, state);
-      });
-      panInput.addEventListener('input', () => {
-        state.pan = parseFloat(panInput.value);
-        if (state.panner) state.panner.pan.value = state.pan;
-      });
-      muteBtn.addEventListener('click', () => {
-        state.muted = !state.muted;
-        if (state.muted && state.solo) {
-          state.solo = false;
-          soloBtn.classList.remove('active-solo');
-        }
-        muteBtn.classList.toggle('active-mute', state.muted);
-        refreshAllGains();
-      });
-      soloBtn.addEventListener('click', () => {
-        state.solo = !state.solo;
-        if (state.solo && state.muted) {
-          state.muted = false;
-          muteBtn.classList.remove('active-mute');
-        }
-        soloBtn.classList.toggle('active-solo', state.solo);
-        refreshAllGains();
-      });
+      createChannel(tm.id, tm.name, 0.85);
     }
   }
 
@@ -349,6 +415,7 @@
       t.audioEl.playbackRate = speed;
       t.audioEl.play();
     }
+    resetMetronomeSchedule(startOffset);
     playing = true;
     els.playBtn.textContent = 'Pause';
     tickLoop();
@@ -374,9 +441,62 @@
     for (const t of tracks.values()) {
       if (t.audioEl) t.audioEl.currentTime = startOffset;
     }
+    resetMetronomeSchedule(startOffset);
     updateTimeUI();
     updateCursor();
     updateTempoUI();
+  }
+
+  // ---------- Metronome ----------
+
+  // Finds the first beat at/after `fromTime` so scheduleMetronome() doesn't
+  // fire every beat since the start of the piece when playback starts/seeks.
+  function resetMetronomeSchedule(fromTime) {
+    let lo = 0, hi = beatMap.length - 1, idx = beatMap.length;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (beatMap[mid].time >= fromTime) { idx = mid; hi = mid - 1; }
+      else lo = mid + 1;
+    }
+    nextBeatIndex = idx;
+  }
+
+  // Each click's own short-lived gain (its click envelope) feeds into the
+  // metronome track's panner, so the metronome's Pan slider works and its
+  // Vol/Mute/Solo (applied to metronome.gain, downstream of the panner)
+  // control it exactly like any instrument track.
+  function playClick(metronome, time, isDownbeat) {
+    const osc = audioCtx.createOscillator();
+    const envelope = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = isDownbeat ? 1500 : 1000;
+    const peak = isDownbeat ? 0.45 : 0.25;
+    envelope.gain.setValueAtTime(0, time);
+    envelope.gain.linearRampToValueAtTime(peak, time + 0.002);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
+    osc.connect(envelope);
+    envelope.connect(metronome.panner);
+    osc.start(time);
+    osc.stop(time + 0.06);
+  }
+
+  // Look-ahead scheduler: beat times are in the media's own (unsped-up)
+  // timeline, same as getCurrentTime(), so 1 second of that timeline takes
+  // 1/speed real seconds to actually play - that's the conversion below.
+  // Muting/soloing the metronome track is handled by its own gain node
+  // (set in applyGain), same as any instrument track, so this always
+  // schedules clicks and lets that gain node decide if they're heard.
+  function scheduleMetronome() {
+    const metronome = tracks.get(METRONOME_ID);
+    if (!metronome || !metronome.panner || !audioCtx) return;
+    const nowPiece = getCurrentTime();
+    const lookaheadPiece = 0.25 * speed;
+    while (nextBeatIndex < beatMap.length && beatMap[nextBeatIndex].time <= nowPiece + lookaheadPiece) {
+      const beat = beatMap[nextBeatIndex];
+      const delay = Math.max(0, (beat.time - nowPiece) / speed);
+      playClick(metronome, audioCtx.currentTime + delay, beat.downbeat);
+      nextBeatIndex++;
+    }
   }
 
   function tickLoop() {
@@ -393,6 +513,7 @@
     updateTimeUI();
     updateCursor();
     updateTempoUI();
+    scheduleMetronome();
     rafHandle = requestAnimationFrame(tickLoop);
   }
 
