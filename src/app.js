@@ -410,7 +410,10 @@
       if (!t.audioEl) continue;
       t.audioEl.currentTime = startOffset;
       t.audioEl.playbackRate = speed;
-      t.audioEl.play();
+      // A play() request can be interrupted by a pause() before it resolves
+      // (e.g. rapid space/arrow-key presses) - that's expected, not a bug;
+      // swallow the resulting rejection so it doesn't spam the console.
+      t.audioEl.play().catch(() => {});
     }
     resetMetronomeSchedule(startOffset);
     playing = true;
@@ -591,6 +594,32 @@
     seekTo(ms / 1000);
   }
 
+  // Pauses and steps the playhead to the previous/next note event
+  // (direction -1/+1), relative to whichever event is currently active -
+  // same "last event with position <= now" lookup updateCursor() uses.
+  function stepNote(direction) {
+    if (!positions || positions.events.length === 0) return;
+    const events = positions.events;
+    const tMs = getCurrentTime() * 1000;
+    let lo = 0, hi = events.length - 1, idx = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (events[mid].position <= tMs) { idx = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    const newIdx = Math.min(events.length - 1, Math.max(0, idx + direction));
+    ensureAudioCtx();
+    stopPlayback();
+    seekTo(events[newIdx].position / 1000);
+  }
+
+  // Scrolls by one screenful of the visible area (direction -1/+1) - same
+  // as native PageUp/PageDown, so it scrolls by however much is actually
+  // visible rather than jumping to a specific page element.
+  function stepPage(direction) {
+    els.pagesWrap.scrollBy({ top: direction * els.pagesWrap.clientHeight, behavior: 'smooth' });
+  }
+
   // ---------- Wiring ----------
 
   els.playBtn.addEventListener('click', () => {
@@ -657,6 +686,49 @@
   });
 
   window.addEventListener('resize', updateCursor);
+
+  // Keyboard shortcuts: space play/pause, left/right pause+step one note,
+  // page up/down (same as Fn+up/Fn+down on a Mac keyboard - the browser
+  // reports those identically as "PageUp"/"PageDown") scroll a page, M
+  // toggles the metronome. Skipped while a form control has focus (e.g. a
+  // mixer slider), so its own native arrow-key/space handling still works,
+  // and skipped for any shortcut-style modifier combo (ctrl/meta/alt).
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+    switch (e.key) {
+      case ' ':
+      case 'Spacebar':
+        e.preventDefault();
+        ensureAudioCtx();
+        if (playing) stopPlayback(); else startPlayback();
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        stepNote(-1);
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        stepNote(1);
+        break;
+      case 'PageUp':
+        e.preventDefault();
+        stepPage(-1);
+        break;
+      case 'PageDown':
+        e.preventDefault();
+        stepPage(1);
+        break;
+      case 'm':
+      case 'M':
+        e.preventDefault();
+        ensureAudioCtx();
+        setMetronomeOn(!metronomeOn);
+        break;
+    }
+  });
 
   if (isFirefox) {
     els.speedSlider.disabled = true;
