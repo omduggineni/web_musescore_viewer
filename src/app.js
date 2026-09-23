@@ -41,6 +41,17 @@
   const ZOOM_MIN = 0.55;
   const ZOOM_MAX = 2.5;
 
+  // How far inside the viewport edges the active staff must stay while
+  // "following" (see the Cursor sync section) - a fraction of the
+  // viewport's own height, not a fixed pixel count, so it scales with
+  // zoom/window size.
+  const FOLLOW_MARGIN_FRACTION = 0.12;
+  // How long a programmatic scroll can go without a 'scrollend' before we
+  // give up waiting for one and clear the flag anyway (older/inconsistent
+  // 'scrollend' support) - longer than the CSS scroll-behavior:smooth
+  // default duration for any scroll distance this app produces.
+  const FOLLOW_SCROLL_FALLBACK_MS = 700;
+
   // Lucide icon paths (ISC license), swapped into a single <svg> on state
   // change rather than keeping two elements and toggling which is hidden.
   const PLAY_ICON = '<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />';
@@ -77,6 +88,24 @@
   let tracks = new Map();
 
   let layoutMode = 'centered'; // or 'book'
+  // Whether the view should keep scrolling to follow the active staff.
+  // Explicit rather than inferred from position history: armed by
+  // pressing play, seeking, or clicking a note; disarmed the moment the
+  // user scrolls away from the active staff on their own (see the Cursor
+  // sync section), and re-armed if they scroll back to it.
+  let followEnabled = false;
+  let followScrollActive = false; // true while a scroll we started is in flight
+  let followScrollFallbackTimer = null;
+  // The active staff's page/position/scale, kept instead of a precomputed
+  // rect: handleManualScroll() below recomputes computeCursorRect() from
+  // page.el's *current* getBoundingClientRect() each time, since a stored
+  // viewport-relative rect goes stale the instant the page scrolls
+  // (including our own follow-scroll moving it) - comparing a pre-scroll
+  // snapshot against the post-scroll viewport was flipping followEnabled
+  // back off right after arming it.
+  let currentCursorPage = null;
+  let currentCursorElInfo = null;
+  let currentCursorScale = 0;
   let playing = false;
   let startOffset = 0;       // playback position (seconds) while paused
   let duration = 0;          // seconds
@@ -178,6 +207,9 @@
     els.seek.disabled = true;
     els.seek.value = 0;
     els.timeLabel.textContent = '0:00 / 0:00';
+    followEnabled = false;
+    currentCursorPage = null;
+    currentCursorElInfo = null;
 
     const base = `scores/${id}/`;
     const [meta, pos, tempos, beats] = await Promise.all([
@@ -463,6 +495,9 @@
     resetMetronomeSchedule(startOffset);
     playing = true;
     setPlayButtonState(true);
+    // Pressing play always (re-)arms follow and snaps to the playhead,
+    // regardless of whatever was scrolled into view beforehand.
+    updateCursor(/* forceScroll */ true);
     tickLoop();
   }
 
@@ -563,20 +598,25 @@
   }
 
   // ---------- Cursor sync ----------
-
-  let lastScrolledKey = null; // `${page}:${y}` of the last staff line checked
-  let lastCursorRect = null; // that staff line's analytically-computed rect
+  //
+  // "Follow" (see followEnabled above) is the whole model here: while armed,
+  // the view keeps the active staff comfortably on screen, including across
+  // staff/page changes during playback; scrolling away from it by hand
+  // disarms follow so nothing fights the user, and scrolling back to it
+  // re-arms. This replaced an earlier approach that inferred "was the
+  // cursor visible before this change" from position history - simpler on
+  // paper, but it broke in different ways on different engines (e.g. a
+  // sliver of overlap counting as "visible" and leaving a staff half-cut-
+  // off; a CSS-transitioned rect read back mid-transition on Firefox but
+  // not Chrome). Explicit state sidesteps that whole class of bug.
 
   // The cursor's on-screen rect computed from position data directly,
   // rather than reading it back via page.cursorEl.getBoundingClientRect()
-  // right after setting its style. That distinction matters: .cursor-hl
-  // has a CSS transition on top/left/width/height for smooth movement
-  // between notes already on screen (as opposed to a page becoming newly
-  // visible, which has no prior state to transition from), and a
-  // just-triggered transition's rect isn't guaranteed to already reflect
-  // the target value when read back synchronously - confirmed this
-  // silently broke same-page staff-change detection on Firefox (page
-  // changes, which don't transition, worked fine).
+  // right after setting its style - that rect can be mid-transition
+  // (.cursor-hl animates top/left/width/height for smooth movement between
+  // notes already on screen) and isn't guaranteed to already reflect the
+  // target value when read back synchronously, inconsistently across
+  // browsers. Computing it ourselves sidesteps the question entirely.
   function computeCursorRect(page, elInfo, scale) {
     const pageRect = page.el.getBoundingClientRect();
     const top = pageRect.top + elInfo.y * scale;
@@ -586,14 +626,22 @@
     return { top, left, width, height, bottom: top + height, right: left + width };
   }
 
-  // Whether `rect` overlaps `wrapRect` vertically at all - not full
-  // containment, not centered, just some intersection. Horizontal
-  // position isn't checked: at high zoom a staff line is wider than the
-  // viewport, so the cursor legitimately walks off the left/right edge
-  // while playing along a single line; that's normal horizontal reading,
-  // not the user scrolling away, and shouldn't count as "not visible."
-  function isVisible(rect, wrapRect) {
-    return rect.top < wrapRect.bottom && rect.bottom > wrapRect.top;
+  // Whether `rect` sits comfortably inside `wrapRect` - fully contained
+  // with margin to spare, not merely overlapping at the edge - or, when
+  // `rect` is bigger than the margin-adjusted viewport in a dimension
+  // (e.g. very high zoom), aligned to the near edge (top over bottom, left
+  // over right) so as much as possible shows. This is the single check
+  // used both to decide whether follow needs to scroll, and whether a
+  // manual scroll has moved the staff out of (or back into) view.
+  // Horizontal position is ignored: at high zoom a staff line is wider
+  // than the viewport, so the cursor legitimately walks off the left/right
+  // edge while playing along a single line - that's normal reading, not
+  // the user scrolling away.
+  function isComfortable(rect, wrapRect) {
+    const margin = wrapRect.height * FOLLOW_MARGIN_FRACTION;
+    return rect.height <= wrapRect.height - 2 * margin
+      ? (rect.top >= wrapRect.top + margin && rect.bottom <= wrapRect.bottom - margin)
+      : Math.abs(rect.top - wrapRect.top) < 1;
   }
 
   // The (deltaY, deltaX) to scroll by so `cursorRect` becomes visible:
@@ -611,10 +659,33 @@
     return { deltaY, deltaX };
   }
 
-  // `forceScroll` bypasses the "was it visible before" gate below, always
-  // scrolling the staff into view if it isn't already - used for the seek
-  // bar, where jumping to the clicked time should always show where that
-  // is, regardless of whatever was on screen beforehand.
+  // Scrolls #pagesWrap and tags it as our own doing, so the 'scroll'
+  // listener below doesn't mistake the resulting events for a manual
+  // scroll and disarm follow. Cleared on 'scrollend', with a timed
+  // fallback in case that event doesn't fire.
+  function followScrollBy(deltaY, deltaX) {
+    followScrollActive = true;
+    if (followScrollFallbackTimer) clearTimeout(followScrollFallbackTimer);
+    followScrollFallbackTimer = setTimeout(() => { followScrollActive = false; }, FOLLOW_SCROLL_FALLBACK_MS);
+    els.pagesWrap.scrollBy({ top: deltaY, left: deltaX, behavior: 'smooth' });
+  }
+
+  // Stops an in-flight follow scroll immediately (rather than letting the
+  // browser's smooth-scroll animation keep running and fight the user) -
+  // called the instant manual scroll input (wheel/touch) is detected.
+  function cancelFollowScroll() {
+    if (!followScrollActive) return;
+    const wrap = els.pagesWrap;
+    wrap.scrollTo({ top: wrap.scrollTop, left: wrap.scrollLeft, behavior: 'auto' });
+    followScrollActive = false;
+    if (followScrollFallbackTimer) { clearTimeout(followScrollFallbackTimer); followScrollFallbackTimer = null; }
+  }
+
+  // `forceScroll` is for a deliberate one-shot jump (the seek bar, or
+  // clicking a note): it always arms follow and always centers on the
+  // result, skipping the comfort check entirely - "regardless of the
+  // above logic," since the point is guaranteeing you see where you
+  // jumped to, not just topping up an already-fine view.
   function updateCursor(forceScroll = false) {
     if (!positions || positions.events.length === 0) return;
     const tMs = getCurrentTime() * 1000;
@@ -636,24 +707,10 @@
     const scale = pageScale(page.img);
     if (!scale) return;
 
-    // The staff (page+y) is changing - in book mode, or on a tall page,
-    // the active note can scroll out of view while still on the same page
-    // as before, which comparing only page indices would miss. Before
-    // moving anything, check whether the cursor - at its OLD position -
-    // was actually on screen: only then do we auto-scroll to follow it to
-    // the new staff. If the user had already scrolled it out of view
-    // (reading ahead/behind on purpose), leave their view alone.
-    const newCursorRect = computeCursorRect(page, elInfo, scale);
-    const scrollKey = `${elInfo.page}:${elInfo.y}`;
-    const staffChanged = scrollKey !== lastScrolledKey;
-    let wasVisible = false;
-    if (staffChanged) {
-      if (lastCursorRect) {
-        wasVisible = isVisible(lastCursorRect, els.pagesWrap.getBoundingClientRect());
-      }
-      lastScrolledKey = scrollKey;
-    }
-    lastCursorRect = newCursorRect;
+    currentCursorPage = page;
+    currentCursorElInfo = elInfo;
+    currentCursorScale = scale;
+    const cursorRect = computeCursorRect(page, elInfo, scale);
 
     pageEls.forEach((p, i) => {
       p.cursorEl.style.display = i === elInfo.page ? 'block' : 'none';
@@ -664,14 +721,48 @@
     page.cursorEl.style.width = `${elInfo.sx * scale}px`;
     page.cursorEl.style.height = `${elInfo.sy * scale}px`;
 
-    if (forceScroll || (staffChanged && wasVisible)) {
+    if (forceScroll) {
+      followEnabled = true;
       const wrapRect = els.pagesWrap.getBoundingClientRect();
-      if (!isVisible(newCursorRect, wrapRect)) {
-        const { deltaY, deltaX } = cursorScrollDelta(newCursorRect, wrapRect);
-        els.pagesWrap.scrollBy({ top: deltaY, left: deltaX, behavior: 'smooth' });
+      const { deltaY, deltaX } = cursorScrollDelta(cursorRect, wrapRect);
+      if (Math.abs(deltaY) > 1 || Math.abs(deltaX) > 1) followScrollBy(deltaY, deltaX);
+    } else if (followEnabled) {
+      const wrapRect = els.pagesWrap.getBoundingClientRect();
+      if (!isComfortable(cursorRect, wrapRect)) {
+        // Vertical-only while continuously following - re-centering
+        // horizontally on every note would be distracting when reading
+        // across a staff line wider than the viewport (high zoom).
+        const { deltaY } = cursorScrollDelta(cursorRect, wrapRect);
+        followScrollBy(deltaY, 0);
       }
     }
   }
+
+  // A #pagesWrap 'scroll' event we didn't cause ourselves (see
+  // followScrollBy/cancelFollowScroll) - the user dragged the scrollbar,
+  // used a wheel/touchpad, or paged with PageUp/Down (stepPage() doesn't
+  // tag its own scroll as ours, since that's deliberate manual navigation
+  // too). Whether the active staff is still comfortably shown decides
+  // whether follow stays armed. Recomputes the staff's rect fresh (rather
+  // than reusing one from updateCursor) since page.el's
+  // getBoundingClientRect() reflects wherever the page has scrolled to by
+  // now, including from this very scroll event.
+  function handleManualScroll() {
+    if (!currentCursorPage) return;
+    const rect = computeCursorRect(currentCursorPage, currentCursorElInfo, currentCursorScale);
+    followEnabled = isComfortable(rect, els.pagesWrap.getBoundingClientRect());
+  }
+
+  els.pagesWrap.addEventListener('wheel', cancelFollowScroll, { passive: true });
+  els.pagesWrap.addEventListener('touchmove', cancelFollowScroll, { passive: true });
+  els.pagesWrap.addEventListener('scrollend', () => {
+    followScrollActive = false;
+    if (followScrollFallbackTimer) { clearTimeout(followScrollFallbackTimer); followScrollFallbackTimer = null; }
+  });
+  els.pagesWrap.addEventListener('scroll', () => {
+    if (followScrollActive) return; // an echo of our own scroll
+    handleManualScroll();
+  });
 
   // Nearest element on `page` to point (px, py), both in PNG-pixel space.
   // Distance to a rect is 0 when the point is inside it, so a click on a
@@ -707,7 +798,7 @@
     if (ms === undefined) return;
 
     ensureAudioCtx();
-    seekTo(ms / 1000);
+    seekTo(ms / 1000, /* forceScroll */ true);
   }
 
   // Scrolls by one screenful of the visible area (direction -1/+1) - same
