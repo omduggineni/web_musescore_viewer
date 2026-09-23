@@ -9,8 +9,17 @@ A statically-hostable MuseScore 4 editor, compiled to WebAssembly, that opens a
 [musescore/MuseScore](https://github.com/musescore/MuseScore) source tree,
 which already includes MuseScore Limited's own in-tree WebAssembly build
 (`src/web/appjs`, `src/web/appshell`, `src/web/audioengine`) using
-Qt 6.10.2 (`wasm_singlethread`) + Emscripten 4.0.7. No source is duplicated
+Qt 6.9.2 (`wasm_singlethread`) + Emscripten 3.1.70. No source is duplicated
 here — only a submodule reference (a commit pointer) is checked in.
+
+**Why not the latest commit:** current `master` has had a broken wasm build
+since ~January 2026 (three maintainer-triggered `Build: Wasm` CI runs failed
+in a row; every run since is a failure except on fix branches). This repo is
+instead pinned to [`1f4dff8`](https://github.com/musescore/MuseScore/commit/1f4dff8aedb9ad6794d2ff6eb76090e2f9e757d2),
+the most recent commit whose own `Build: Wasm` workflow actually passed in
+MuseScore's CI. That means this editor is ~8 months behind head — a real,
+known tradeoff, not a silent substitution. Re-pointing the submodule at a
+newer commit is worth retrying once upstream's wasm build is green again.
 
 The only local change is `overlay/viewer.html`, which replaces
 `MuseScore/src/web/appjs/viewer/viewer.html` at build time (see
