@@ -5,9 +5,13 @@
     title: document.getElementById('scoreTitle'),
     composer: document.getElementById('scoreComposer'),
     tempoLabel: document.getElementById('tempoLabel'),
+    metronomeBtn: document.getElementById('metronomeBtn'),
     speedSlider: document.getElementById('speedSlider'),
     speedValue: document.getElementById('speedValue'),
-    viewModeBtn: document.getElementById('viewModeBtn'),
+    viewCenteredBtn: document.getElementById('viewCenteredBtn'),
+    viewBookBtn: document.getElementById('viewBookBtn'),
+    mixer: document.getElementById('mixer'),
+    mixerToggleBtn: document.getElementById('mixerToggleBtn'),
     pagesWrap: document.getElementById('pagesWrap'),
     pages: document.getElementById('pages'),
     channels: document.getElementById('channels'),
@@ -23,14 +27,15 @@
   // Web Audio via createMediaElementSource glitches/pops - worse with more
   // simultaneous tracks. Chrome/Safari don't share this bug. Rather than
   // give up the Web Audio mixing graph (panning, clean gain nodes) on
-  // Firefox, we just disable the speed control there - see wireSpeedSlider.
+  // Firefox, we just disable the speed control there - see the isFirefox
+  // block below.
   const isFirefox = /firefox/i.test(navigator.userAgent);
   const FIREFOX_BUG_URL = 'https://bugzilla.mozilla.org/show_bug.cgi?id=1517199';
-  const METRONOME_ID = '__metronome__';
 
   /** @type {AudioContext|null} */
   let audioCtx = null;
   let masterGain = null;
+  let metronomeGain = null;
 
   let currentScore = null;   // meta.json contents
   let positions = null;      // positions.json contents
@@ -39,6 +44,8 @@
   let tempoMap = [];         // [{time (sec), bpm}, ...] sorted by time
   let beatMap = [];          // [{time (sec), downbeat}, ...] sorted by time
   let nextBeatIndex = 0;     // metronome scheduler's position in beatMap
+  let metronomeOn = false;
+  let mixerOpen = true;
   let pageEls = [];          // [{el, img, cursorEl}]
   /** @type {IntersectionObserver|null} */
   let pageObserver = null;   // lazy-loads/unloads page images as they scroll
@@ -162,6 +169,7 @@
     tempoMap = tempos;
     beatMap = beats;
     nextBeatIndex = 0;
+    setMetronomeOn(false);
     elementsById = new Map(positions.elements.map(e => [e.id, e]));
     eventPositionByElId = new Map(positions.events.map(e => [e.elid, e.position]));
     duration = meta.duration || 0;
@@ -278,15 +286,11 @@
   }
 
   // Builds one mixer channel (name, volume, pan, mute, solo) and registers
-  // its state in `tracks`. Used identically for the metronome and for real
-  // instrument tracks, so they share one control box and one mute/solo
-  // implementation - the metronome is just a track with no <audio> element,
-  // whose "source" is the oscillator clicks scheduleMetronome() plays into
-  // its panner node.
-  function createChannel(id, name, initialVolume, initialMuted = false) {
+  // its state in `tracks`.
+  function createChannel(id, name, initialVolume) {
     const state = {
       audioEl: null, gain: null, panner: null,
-      volume: initialVolume, pan: 0, muted: initialMuted, solo: false,
+      volume: initialVolume, pan: 0, muted: false, solo: false,
     };
     tracks.set(id, state);
 
@@ -303,7 +307,7 @@
         <input type="range" min="-1" max="1" step="0.01" value="0" data-role="pan">
       </div>
       <div class="channel-toggles">
-        <button type="button" class="toggle-btn${initialMuted ? ' active-mute' : ''}" data-role="mute">Mute</button>
+        <button type="button" class="toggle-btn" data-role="mute">Mute</button>
         <button type="button" class="toggle-btn" data-role="solo">Solo</button>
       </div>
     `;
@@ -345,16 +349,6 @@
   }
 
   function renderMixer(trackMetas) {
-    ensureAudioCtx();
-    const metronome = createChannel(METRONOME_ID, 'Metronome', 0.5, true);
-    const panner = audioCtx.createStereoPanner();
-    const gain = audioCtx.createGain();
-    panner.connect(gain);
-    gain.connect(masterGain);
-    metronome.panner = panner;
-    metronome.gain = gain;
-    applyGain(METRONOME_ID, metronome);
-
     for (const tm of trackMetas) {
       createChannel(tm.id, tm.name, 0.85);
     }
@@ -404,6 +398,9 @@
     masterGain = audioCtx.createGain();
     masterGain.gain.value = 1;
     masterGain.connect(audioCtx.destination);
+    metronomeGain = audioCtx.createGain();
+    metronomeGain.gain.value = 0.5;
+    metronomeGain.connect(masterGain);
   }
 
   function startPlayback() {
@@ -461,11 +458,7 @@
     nextBeatIndex = idx;
   }
 
-  // Each click's own short-lived gain (its click envelope) feeds into the
-  // metronome track's panner, so the metronome's Pan slider works and its
-  // Vol/Mute/Solo (applied to metronome.gain, downstream of the panner)
-  // control it exactly like any instrument track.
-  function playClick(metronome, time, isDownbeat) {
+  function playClick(time, isDownbeat) {
     const osc = audioCtx.createOscillator();
     const envelope = audioCtx.createGain();
     osc.type = 'sine';
@@ -475,7 +468,7 @@
     envelope.gain.linearRampToValueAtTime(peak, time + 0.002);
     envelope.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
     osc.connect(envelope);
-    envelope.connect(metronome.panner);
+    envelope.connect(metronomeGain);
     osc.start(time);
     osc.stop(time + 0.06);
   }
@@ -483,18 +476,14 @@
   // Look-ahead scheduler: beat times are in the media's own (unsped-up)
   // timeline, same as getCurrentTime(), so 1 second of that timeline takes
   // 1/speed real seconds to actually play - that's the conversion below.
-  // Muting/soloing the metronome track is handled by its own gain node
-  // (set in applyGain), same as any instrument track, so this always
-  // schedules clicks and lets that gain node decide if they're heard.
   function scheduleMetronome() {
-    const metronome = tracks.get(METRONOME_ID);
-    if (!metronome || !metronome.panner || !audioCtx) return;
+    if (!metronomeOn || !audioCtx) return;
     const nowPiece = getCurrentTime();
     const lookaheadPiece = 0.25 * speed;
     while (nextBeatIndex < beatMap.length && beatMap[nextBeatIndex].time <= nowPiece + lookaheadPiece) {
       const beat = beatMap[nextBeatIndex];
       const delay = Math.max(0, (beat.time - nowPiece) / speed);
-      playClick(metronome, audioCtx.currentTime + delay, beat.downbeat);
+      playClick(audioCtx.currentTime + delay, beat.downbeat);
       nextBeatIndex++;
     }
   }
@@ -631,10 +620,40 @@
     }
   });
 
-  els.viewModeBtn.addEventListener('click', () => {
-    layoutMode = layoutMode === 'centered' ? 'book' : 'centered';
-    els.viewModeBtn.textContent = layoutMode === 'centered' ? 'Book view' : 'Centered view';
+  function setViewMode(mode) {
+    layoutMode = mode;
+    els.viewCenteredBtn.classList.toggle('active', mode === 'centered');
+    els.viewCenteredBtn.setAttribute('aria-pressed', String(mode === 'centered'));
+    els.viewBookBtn.classList.toggle('active', mode === 'book');
+    els.viewBookBtn.setAttribute('aria-pressed', String(mode === 'book'));
     applyLayout();
+  }
+
+  els.viewCenteredBtn.addEventListener('click', () => setViewMode('centered'));
+  els.viewBookBtn.addEventListener('click', () => setViewMode('book'));
+  setViewMode(layoutMode);
+
+  function setMixerOpen(open) {
+    mixerOpen = open;
+    els.mixer.hidden = !open;
+    els.mixerToggleBtn.classList.toggle('active', open);
+    els.mixerToggleBtn.setAttribute('aria-pressed', String(open));
+    updateCursor();
+  }
+
+  els.mixerToggleBtn.addEventListener('click', () => setMixerOpen(!mixerOpen));
+  setMixerOpen(mixerOpen);
+
+  function setMetronomeOn(on) {
+    metronomeOn = on;
+    els.metronomeBtn.classList.toggle('active', on);
+    els.metronomeBtn.setAttribute('aria-pressed', String(on));
+    if (on) resetMetronomeSchedule(getCurrentTime());
+  }
+
+  els.metronomeBtn.addEventListener('click', () => {
+    ensureAudioCtx();
+    setMetronomeOn(!metronomeOn);
   });
 
   window.addEventListener('resize', updateCursor);

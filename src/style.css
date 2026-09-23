@@ -57,6 +57,12 @@ body {
   gap: 1rem;
 }
 
+#tempoGroup {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 #tempoLabel {
   font-size: 0.85rem;
   color: var(--text-dim);
@@ -81,14 +87,56 @@ body {
   width: 3.2em;
 }
 
-#viewModeBtn {
-  font-size: 0.82rem;
-  padding: 0.35rem 0.8rem;
-  border-radius: 6px;
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
   border: 1px solid var(--border);
+  border-radius: 6px;
   background: var(--bg);
-  color: var(--text);
+  color: var(--text-dim);
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+.icon-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.segmented {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.segmented .segment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.segmented .segment:last-child {
+  border-right: none;
+}
+
+.segmented .segment.active {
+  background: var(--accent);
+  color: #fff;
 }
 
 #main {
