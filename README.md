@@ -6,8 +6,9 @@ no MuseScore code running in the browser at all) - the site itself is plain
 HTML/CSS/JS reading static files.
 
 Per score, the viewer shows the engraved page(s) as images with a cursor
-that tracks the beat as it plays, and a mixer with independent volume, pan,
-mute and solo per instrument.
+that tracks the beat as it plays, a mixer with independent volume, pan,
+mute and solo per instrument, and a toggleable metronome that follows the
+score's actual meter and tempo changes.
 
 > This project originally set out to compile MuseScore 4 itself to
 > WebAssembly for in-browser editing. That path was abandoned: MuseScore's
@@ -116,7 +117,14 @@ npm run serve
 
 Then open `http://localhost:8000/index.html?score=<id>`.
 
+## Icons
+
+Toolbar icons (metronome, page-layout toggle, mixer toggle) are inlined
+directly in `index.html` as SVG - copied from [Lucide](https://lucide.dev)
+(ISC license). No icon font or library is fetched at runtime.
+
 ## License
 
 MuseScore Studio is GPL-3.0-only. This repo's own files (`tools/`, `src/`)
-are released under the same license.
+are released under the same license. The inlined Lucide icons (see above)
+remain under their own ISC license.
