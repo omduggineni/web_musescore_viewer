@@ -1,0 +1,40 @@
+{
+  "id": "text",
+  "title": "Text",
+  "composer": "Wolfgang Amadeus Mozart",
+  "tempoText": "",
+  "duration": 28,
+  "npages": 1,
+  "tracks": [
+    {
+      "id": "flauto",
+      "name": "Flauto",
+      "order": 0,
+      "file": "tracks/flauto.mp3"
+    },
+    {
+      "id": "oboi",
+      "name": "Oboi",
+      "order": 1,
+      "file": "tracks/oboi.mp3"
+    },
+    {
+      "id": "clarinetti-in-b",
+      "name": "Clarinetti in B",
+      "order": 2,
+      "file": "tracks/clarinetti-in-b.mp3"
+    },
+    {
+      "id": "fagotti",
+      "name": "Fagotti",
+      "order": 3,
+      "file": "tracks/fagotti.mp3"
+    },
+    {
+      "id": "corno-in-b",
+      "name": "Corno in B",
+      "order": 4,
+      "file": "tracks/corno-in-b.mp3"
+    }
+  ]
+}

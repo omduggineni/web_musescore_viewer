@@ -1,0 +1,4 @@
+tools/soundfont/
+__pycache__/
+*.pyc
+.playwright-cli/

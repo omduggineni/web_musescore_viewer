@@ -1,0 +1,239 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f4f4f6;
+  --panel: #ffffff;
+  --border: #d8d8de;
+  --text: #1c1c22;
+  --text-dim: #6b6b76;
+  --accent: #3a6df0;
+  --cursor: rgba(58, 109, 240, 0.28);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.6rem 1rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+#pickerWrap {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+#scorePicker {
+  font-size: 0.9rem;
+  padding: 0.25rem 0.4rem;
+}
+
+#scoreInfo {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+#scoreTitle {
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+#scoreComposer {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+#midiLink {
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+#midiLink:hover {
+  text-decoration: underline;
+}
+
+#main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+#pagesWrap {
+  flex: 1;
+  overflow: auto;
+  padding: 1.5rem;
+  display: flex;
+  justify-content: center;
+}
+
+#pages {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.page {
+  position: relative;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  max-width: 100%;
+}
+
+.page img {
+  display: block;
+  width: min(900px, 100%);
+  height: auto;
+}
+
+.cursor-hl {
+  position: absolute;
+  background: var(--cursor);
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  display: none;
+  transition: left 0.05s linear, top 0.05s linear, width 0.05s linear, height 0.05s linear;
+}
+
+#mixer {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+#mixer h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.channel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  margin-bottom: 0.6rem;
+}
+
+.channel-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.channel-row label {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  width: 2.6rem;
+  flex-shrink: 0;
+}
+
+.channel input[type="range"] {
+  flex: 1;
+}
+
+.channel-toggles {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.toggle-btn {
+  flex: 1;
+  font-size: 0.72rem;
+  padding: 0.25rem 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  cursor: pointer;
+  color: var(--text);
+}
+
+.toggle-btn.active-mute {
+  background: #d9483c;
+  color: #fff;
+  border-color: #d9483c;
+}
+
+.toggle-btn.active-solo {
+  background: #e0a92a;
+  color: #fff;
+  border-color: #e0a92a;
+}
+
+#transport {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.6rem 1rem;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+#playBtn {
+  font-size: 0.9rem;
+  padding: 0.4rem 1.1rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+#playBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#seek {
+  flex: 1;
+}
+
+#timeLabel {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  #main { flex-direction: column; }
+  #mixer { width: auto; border-left: none; border-top: 1px solid var(--border); }
+}

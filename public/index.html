@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Score Viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="topbar">
+    <label id="pickerWrap">
+      Score:
+      <select id="scorePicker"></select>
+    </label>
+    <div id="scoreInfo">
+      <span id="scoreTitle"></span>
+      <span id="scoreComposer"></span>
+    </div>
+    <a id="midiLink" href="#" download>Download MIDI</a>
+  </header>
+
+  <main id="main">
+    <section id="pagesWrap">
+      <div id="pages"></div>
+    </section>
+
+    <aside id="mixer">
+      <h2>Mixer</h2>
+      <div id="channels"></div>
+    </aside>
+  </main>
+
+  <footer id="transport">
+    <button id="playBtn" disabled>Play</button>
+    <input id="seek" type="range" min="0" max="1000" value="0" step="1" disabled>
+    <span id="timeLabel">0:00 / 0:00</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
