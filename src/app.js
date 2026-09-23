@@ -630,18 +630,29 @@
   // with margin to spare, not merely overlapping at the edge - or, when
   // `rect` is bigger than the margin-adjusted viewport in a dimension
   // (e.g. very high zoom), aligned to the near edge (top over bottom, left
-  // over right) so as much as possible shows. This is the single check
-  // used both to decide whether follow needs to scroll, and whether a
-  // manual scroll has moved the staff out of (or back into) view.
-  // Horizontal position is ignored: at high zoom a staff line is wider
-  // than the viewport, so the cursor legitimately walks off the left/right
-  // edge while playing along a single line - that's normal reading, not
-  // the user scrolling away.
+  // over right) so as much as possible shows. Used to decide whether
+  // follow needs to scroll, and (see handleManualScroll) whether a manual
+  // scroll has taken the staff out of comfortable view - the stricter of
+  // the two checks used there, for leaving follow armed. Horizontal
+  // position is ignored: at high zoom a staff line is wider than the
+  // viewport, so the cursor legitimately walks off the left/right edge
+  // while playing along a single line - that's normal reading, not the
+  // user scrolling away.
   function isComfortable(rect, wrapRect) {
     const margin = wrapRect.height * FOLLOW_MARGIN_FRACTION;
     return rect.height <= wrapRect.height - 2 * margin
       ? (rect.top >= wrapRect.top + margin && rect.bottom <= wrapRect.bottom - margin)
       : Math.abs(rect.top - wrapRect.top) < 1;
+  }
+
+  // Whether `rect` overlaps `wrapRect` at all, vertically - not
+  // comfortable, not centered, just some overlap. The looser of the two
+  // checks in handleManualScroll, used for re-arming follow: scrolling
+  // back to where the staff is merely visible again is enough to resume,
+  // rather than requiring a scroll all the way back to comfortable -
+  // follow's own scrolling then re-centers it from there anyway.
+  function isRoughlyVisible(rect, wrapRect) {
+    return rect.top < wrapRect.bottom && rect.bottom > wrapRect.top;
   }
 
   // The (deltaY, deltaX) to scroll by so `cursorRect` becomes visible:
@@ -742,15 +753,23 @@
   // followScrollBy/cancelFollowScroll) - the user dragged the scrollbar,
   // used a wheel/touchpad, or paged with PageUp/Down (stepPage() doesn't
   // tag its own scroll as ours, since that's deliberate manual navigation
-  // too). Whether the active staff is still comfortably shown decides
-  // whether follow stays armed. Recomputes the staff's rect fresh (rather
-  // than reusing one from updateCursor) since page.el's
-  // getBoundingClientRect() reflects wherever the page has scrolled to by
-  // now, including from this very scroll event.
+  // too). Recomputes the staff's rect fresh (rather than reusing one from
+  // updateCursor) since page.el's getBoundingClientRect() reflects
+  // wherever the page has scrolled to by now, including from this very
+  // scroll event.
+  //
+  // Disarming and re-arming use different thresholds on purpose: leaving
+  // follow armed requires the staff to still be comfortably shown (the
+  // stricter check - drifting to the edge counts as "scrolled away"), but
+  // resuming only requires the staff to be visible again at all (the
+  // looser one) - otherwise you'd have to scroll all the way back to
+  // comfortable just to resume, when follow's own scrolling re-centers it
+  // from anywhere visible anyway.
   function handleManualScroll() {
     if (!currentCursorPage) return;
     const rect = computeCursorRect(currentCursorPage, currentCursorElInfo, currentCursorScale);
-    followEnabled = isComfortable(rect, els.pagesWrap.getBoundingClientRect());
+    const wrapRect = els.pagesWrap.getBoundingClientRect();
+    followEnabled = followEnabled ? isComfortable(rect, wrapRect) : isRoughlyVisible(rect, wrapRect);
   }
 
   els.pagesWrap.addEventListener('wheel', cancelFollowScroll, { passive: true });
