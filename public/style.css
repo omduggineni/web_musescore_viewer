@@ -88,14 +88,19 @@ body {
   width: min(900px, 100%);
 }
 
-/* Book: page 1 alone (like a cover), then spreads of two pages side by
-   side - each page sized to fit the spread rather than a fixed cap. */
+/* Book: two-page spreads, each page sized to fit the spread rather than a
+   fixed cap. A lone trailing page (odd page count) sits on the left, where
+   its spread partner would otherwise have been, instead of centering alone. */
 #pages.layout-book .spread {
   display: flex;
   justify-content: center;
   gap: 1rem;
   width: 100%;
   max-width: 1400px;
+}
+
+#pages.layout-book .spread-single {
+  justify-content: flex-start;
 }
 
 #pages.layout-book .spread .page {

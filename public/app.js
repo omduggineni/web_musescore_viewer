@@ -141,7 +141,8 @@
       let i = 0;
       while (i < pageEls.length) {
         const spread = document.createElement('div');
-        spread.className = 'spread';
+        const isLoneTrailingPage = i === pageEls.length - 1;
+        spread.className = isLoneTrailingPage ? 'spread spread-single' : 'spread';
         spread.appendChild(pageEls[i].el);
         if (pageEls[i + 1]) spread.appendChild(pageEls[i + 1].el);
         i += 2;
