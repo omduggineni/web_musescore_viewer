@@ -137,19 +137,14 @@
     if (layoutMode === 'centered') {
       for (const p of pageEls) els.pages.appendChild(p.el);
     } else {
-      // Book pagination: page 1 alone (like a cover), then two-page spreads.
+      // Book pagination: two-page spreads throughout, starting with page 1.
       let i = 0;
       while (i < pageEls.length) {
         const spread = document.createElement('div');
         spread.className = 'spread';
-        if (i === 0) {
-          spread.appendChild(pageEls[0].el);
-          i = 1;
-        } else {
-          spread.appendChild(pageEls[i].el);
-          if (pageEls[i + 1]) spread.appendChild(pageEls[i + 1].el);
-          i += 2;
-        }
+        spread.appendChild(pageEls[i].el);
+        if (pageEls[i + 1]) spread.appendChild(pageEls[i + 1].el);
+        i += 2;
         els.pages.appendChild(spread);
       }
     }
