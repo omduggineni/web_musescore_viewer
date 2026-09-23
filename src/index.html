@@ -12,7 +12,15 @@
       <span id="scoreTitle"></span>
       <span id="scoreComposer"></span>
     </div>
-    <button id="viewModeBtn" type="button">Book view</button>
+    <div id="rightControls">
+      <span id="tempoLabel"></span>
+      <label id="speedWrap">
+        Speed
+        <input id="speedSlider" type="range" min="0.7" max="1" step="0.02" value="1">
+        <span id="speedValue">1.00×</span>
+      </label>
+      <button id="viewModeBtn" type="button">Book view</button>
+    </div>
   </header>
 
   <main id="main">

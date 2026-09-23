@@ -2,7 +2,7 @@
 """
 Build-time pre-render pipeline for the static score viewer.
 
-For each score listed in scores-src/manifest.json, this:
+For each score listed in scores/manifest.json, this:
   1. Runs `mscore --score-media` (real MuseScore 4 desktop CLI) to get
      per-page PNGs, cursor position/timing data (mposXML/sposXML), a
      multi-track MIDI export, and score metadata - all in one JSON blob.
@@ -22,12 +22,17 @@ For each score listed in scores-src/manifest.json, this:
      that one instrument's Part/Staff data. Verified empirically - three
      parts of the same score came back with distinct checksums and
      distinct volume profiles matching each part's actual note content.)
-  3. Writes everything as static files under public/scores/<id>/, plus a
-     public/scores/index.json listing what's available.
+  3. Writes everything as static files under dist/scores/<id>/, plus a
+     dist/scores/index.json listing what's available. `npm run build`
+     copies src/ (the site itself) into dist/ before running this.
 
-Requires on PATH: mscore (MuseScore 4 CLI). No other dependencies.
+Requires on PATH: mscore (MuseScore 4 CLI). Also requires the `mido`
+Python package, used only to build a tempo-change map from the MIDI export
+(so the player can show the tempo actually in effect at the playhead, not
+just the score's initial/nominal marking).
 """
 import base64
+import io
 import json
 import re
 import shutil
@@ -36,9 +41,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+import mido
+
 ROOT = Path(__file__).resolve().parent.parent
-SRC_DIR = ROOT / "scores-src"
-OUT_DIR = ROOT / "public" / "scores"
+SRC_DIR = ROOT / "scores"
+OUT_DIR = ROOT / "dist" / "scores"
 
 
 def run_score_media(mscz_path: Path) -> dict:
@@ -111,6 +118,22 @@ def parse_positions_xml(xml_b64: str) -> dict:
     return {"elements": elements, "events": events}
 
 
+def extract_tempo_map(midi_bytes: bytes) -> list[dict]:
+    """[{time (sec), bpm}, ...], sorted by time - the tempo actually in
+    effect at each point, for scores with tempo changes (rit., a fermata,
+    an accelerando). MuseScore only ever writes set_tempo on track 0."""
+    mid = mido.MidiFile(file=io.BytesIO(midi_bytes))
+    tempo_map = []
+    cur_tempo = 500000  # MIDI default, 120 BPM, until the first set_tempo
+    cur_time = 0.0
+    for msg in mid.tracks[0]:
+        cur_time += mido.tick2second(msg.time, mid.ticks_per_beat, cur_tempo)
+        if msg.type == "set_tempo":
+            cur_tempo = msg.tempo
+            tempo_map.append({"time": round(cur_time, 3), "bpm": round(60000000 / cur_tempo)})
+    return tempo_map
+
+
 def slugify(name: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip().lower()).strip("-")
     return s or "track"
@@ -140,6 +163,8 @@ def process_score(score_id: str, title_override: str | None = None):
 
     midi_bytes = base64.b64decode(media["midi"])
     (out_dir / "score.mid").write_bytes(midi_bytes)
+    tempo_map = extract_tempo_map(midi_bytes)
+    (out_dir / "tempo-map.json").write_text(json.dumps(tempo_map))
 
     print(f"[{score_id}] running mscore --score-parts + rendering audio ...")
     parts = run_score_parts(src)
@@ -162,6 +187,11 @@ def process_score(score_id: str, title_override: str | None = None):
         "title": title_override or meta.get("title") or score_id,
         "composer": meta.get("composer", ""),
         "tempoText": meta.get("tempoText", ""),
+        # metadata.tempo is already plain BPM (verified: e.g. nodkrai's own
+        # printed tempo marking is "= 103" and this reports 103, not 103*60).
+        # It's the score's marked/nominal tempo - scores with tempo changes
+        # mid-piece (a rit., a fermata) only get this one representative value.
+        "bpm": round(meta.get("tempo", 0)),
         "duration": meta.get("duration", 0),
         "npages": npages,
         "tracks": tracks_meta,

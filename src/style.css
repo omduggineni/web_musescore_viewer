@@ -50,8 +50,38 @@ body {
   font-size: 0.9rem;
 }
 
-#viewModeBtn {
+#rightControls {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+#tempoLabel {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#speedWrap {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+#speedSlider {
+  width: 100px;
+}
+
+#speedValue {
+  font-variant-numeric: tabular-nums;
+  width: 3.2em;
+}
+
+#viewModeBtn {
   font-size: 0.82rem;
   padding: 0.35rem 0.8rem;
   border-radius: 6px;

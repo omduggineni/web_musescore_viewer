@@ -1,0 +1,10 @@
+{
+  "name": "web-musescore-viewer",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Statically-hostable, pre-rendered MuseScore score viewer with synced cursor and a per-instrument mixer.",
+  "scripts": {
+    "build": "rm -rf dist && mkdir -p dist && cp -r src/. dist/ && python3 tools/prerender.py",
+    "serve": "python3 -m http.server 8000 --directory dist"
+  }
+}

@@ -4,6 +4,9 @@
   const els = {
     title: document.getElementById('scoreTitle'),
     composer: document.getElementById('scoreComposer'),
+    tempoLabel: document.getElementById('tempoLabel'),
+    speedSlider: document.getElementById('speedSlider'),
+    speedValue: document.getElementById('speedValue'),
     viewModeBtn: document.getElementById('viewModeBtn'),
     pages: document.getElementById('pages'),
     channels: document.getElementById('channels'),
@@ -14,6 +17,15 @@
 
   const SEEK_RESOLUTION = 1000;
 
+  // Firefox has long-standing bugs (bugzilla 966247/1517199/1251640/1648277)
+  // where a rate-changed, pitch-preserved <audio> element routed through
+  // Web Audio via createMediaElementSource glitches/pops - worse with more
+  // simultaneous tracks. Chrome/Safari don't share this bug. Rather than
+  // give up the Web Audio mixing graph (panning, clean gain nodes) on
+  // Firefox, we just disable the speed control there - see wireSpeedSlider.
+  const isFirefox = /firefox/i.test(navigator.userAgent);
+  const FIREFOX_BUG_URL = 'https://bugzilla.mozilla.org/show_bug.cgi?id=1517199';
+
   /** @type {AudioContext|null} */
   let audioCtx = null;
   let masterGain = null;
@@ -22,17 +34,18 @@
   let positions = null;      // positions.json contents
   let elementsById = null;   // Map<id, element>
   let eventPositionByElId = null; // Map<elementId, ms>
+  let tempoMap = [];         // [{time (sec), bpm}, ...] sorted by time
   let pageEls = [];          // [{el, img, cursorEl}]
 
-  /** @type {Map<string, {buffer:AudioBuffer, gain:GainNode, panner:StereoPannerNode,
-   *   volume:number, pan:number, muted:boolean, solo:boolean, source:AudioBufferSourceNode|null}>} */
+  /** @type {Map<string, {audioEl:HTMLAudioElement, gain:GainNode, panner:StereoPannerNode,
+   *   volume:number, pan:number, muted:boolean, solo:boolean}>} */
   let tracks = new Map();
 
   let layoutMode = 'centered'; // or 'book'
   let playing = false;
-  let startCtxTime = 0;      // audioCtx.currentTime when playback last (re)started
-  let startOffset = 0;       // playback position (seconds) at that moment
+  let startOffset = 0;       // playback position (seconds) while paused
   let duration = 0;          // seconds
+  let speed = 1;             // playback rate multiplier
   let rafHandle = null;
   let seekDragging = false;
 
@@ -43,9 +56,20 @@
     return `${m}:${String(s).padStart(2, '0')}`;
   }
 
+  // Any one track's <audio> element is the clock: with real media elements
+  // (as opposed to AudioBufferSourceNode) currentTime already accounts for
+  // playbackRate on its own, so there's no need to hand-track elapsed time.
+  function getClockElement() {
+    for (const t of tracks.values()) {
+      if (t.audioEl) return t.audioEl;
+    }
+    return null;
+  }
+
   function getCurrentTime() {
     if (!playing) return startOffset;
-    return startOffset + (audioCtx.currentTime - startCtxTime);
+    const el = getClockElement();
+    return el ? el.currentTime : startOffset;
   }
 
   function isAudible(t) {
@@ -55,7 +79,48 @@
   }
 
   function applyGain(id, t) {
-    t.gain.gain.value = isAudible(t) ? t.volume : 0;
+    const v = isAudible(t) ? t.volume : 0;
+    if (t.gain) t.gain.gain.value = v;
+    else if (t.audioEl) t.audioEl.volume = v;
+  }
+
+  // Chrome/Firefox/Safari all support this under some spelling; setting all
+  // three is harmless where a given one doesn't exist.
+  function setPreservesPitch(el, value) {
+    el.preservesPitch = value;
+    el.mozPreservesPitch = value;
+    el.webkitPreservesPitch = value;
+  }
+
+  function updateSpeedUI() {
+    els.speedValue.textContent = `${speed.toFixed(2)}×`;
+    updateTempoUI();
+  }
+
+  // The tempo in effect at the current playhead, not just the score's
+  // initial marking - scores with a rit./accelerando/fermata have several.
+  function currentBaseBpm() {
+    if (tempoMap.length === 0) return (currentScore && currentScore.bpm) || 0;
+    const t = getCurrentTime();
+    let lo = 0, hi = tempoMap.length - 1, idx = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (tempoMap[mid].time <= t) { idx = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    return tempoMap[idx].bpm;
+  }
+
+  function updateTempoUI() {
+    const baseBpm = currentBaseBpm();
+    if (!baseBpm) {
+      els.tempoLabel.textContent = '';
+      return;
+    }
+    const effectiveBpm = Math.round(baseBpm * speed);
+    els.tempoLabel.textContent = speed === 1
+      ? `♩ = ${baseBpm}`
+      : `♩ = ${effectiveBpm} (${baseBpm} × ${speed.toFixed(2)})`;
   }
 
   // ---------- Loading a score ----------
@@ -80,18 +145,24 @@
     els.timeLabel.textContent = '0:00 / 0:00';
 
     const base = `scores/${id}/`;
-    const [meta, pos] = await Promise.all([
+    const [meta, pos, tempos] = await Promise.all([
       fetch(base + 'meta.json').then(r => r.json()),
       fetch(base + 'positions.json').then(r => r.json()),
+      fetch(base + 'tempo-map.json').then(r => r.json()),
     ]);
     currentScore = meta;
     positions = pos;
+    tempoMap = tempos;
     elementsById = new Map(positions.elements.map(e => [e.id, e]));
     eventPositionByElId = new Map(positions.events.map(e => [e.elid, e.position]));
     duration = meta.duration || 0;
 
     els.title.textContent = meta.title;
     els.composer.textContent = meta.composer || '';
+
+    speed = 1;
+    els.speedSlider.value = 1;
+    updateSpeedUI();
 
     renderPages(base, meta.npages);
     renderMixer(meta.tracks);
@@ -165,8 +236,8 @@
   function renderMixer(trackMetas) {
     for (const tm of trackMetas) {
       const state = {
-        buffer: null, gain: null, panner: null,
-        volume: 0.85, pan: 0, muted: false, solo: false, source: null,
+        audioEl: null, gain: null, panner: null,
+        volume: 0.85, pan: 0, muted: false, solo: false,
       };
       tracks.set(tm.id, state);
 
@@ -196,7 +267,7 @@
 
       volumeInput.addEventListener('input', () => {
         state.volume = parseFloat(volumeInput.value);
-        if (state.gain) applyGain(tm.id, state);
+        applyGain(tm.id, state);
       });
       panInput.addEventListener('input', () => {
         state.pan = parseFloat(panInput.value);
@@ -204,11 +275,19 @@
       });
       muteBtn.addEventListener('click', () => {
         state.muted = !state.muted;
+        if (state.muted && state.solo) {
+          state.solo = false;
+          soloBtn.classList.remove('active-solo');
+        }
         muteBtn.classList.toggle('active-mute', state.muted);
         refreshAllGains();
       });
       soloBtn.addEventListener('click', () => {
         state.solo = !state.solo;
+        if (state.solo && state.muted) {
+          state.muted = false;
+          muteBtn.classList.remove('active-mute');
+        }
         soloBtn.classList.toggle('active-solo', state.solo);
         refreshAllGains();
       });
@@ -217,31 +296,38 @@
 
   function refreshAllGains() {
     for (const [id, t] of tracks) {
-      if (t.gain) applyGain(id, t);
+      applyGain(id, t);
     }
   }
 
   async function loadAudioTracks(base, trackMetas) {
     ensureAudioCtx();
-    await Promise.all(trackMetas.map(async tm => {
-      const res = await fetch(base + tm.file);
-      const arr = await res.arrayBuffer();
-      const buffer = await audioCtx.decodeAudioData(arr);
+    await Promise.all(trackMetas.map(tm => new Promise((resolve, reject) => {
       const t = tracks.get(tm.id);
-      t.buffer = buffer;
-      duration = Math.max(duration, buffer.duration);
 
+      const audioEl = new Audio();
+      audioEl.preload = 'auto';
+      setPreservesPitch(audioEl, true);
+      audioEl.addEventListener('canplaythrough', () => resolve(), { once: true });
+      audioEl.addEventListener('error', () => reject(new Error(`failed to load ${tm.file}`)), { once: true });
+      audioEl.src = base + tm.file;
+      t.audioEl = audioEl;
+
+      // createMediaElementSource routes the element's audio through this
+      // graph instead of straight to the speakers - it stops going to the
+      // speakers on its own the moment this is called.
+      const source = audioCtx.createMediaElementSource(audioEl);
       const panner = audioCtx.createStereoPanner();
       panner.pan.value = t.pan;
       const gain = audioCtx.createGain();
-      gain.gain.value = 0; // engaged in startPlayback/applyGain
+      gain.gain.value = 0; // engaged in applyGain below
+      source.connect(panner);
       panner.connect(gain);
       gain.connect(masterGain);
-
       t.panner = panner;
       t.gain = gain;
       applyGain(tm.id, t);
-    }));
+    })));
   }
 
   // ---------- Playback ----------
@@ -254,33 +340,15 @@
     masterGain.connect(audioCtx.destination);
   }
 
-  function startSourcesAt(offsetSeconds) {
-    for (const t of tracks.values()) {
-      if (!t.buffer) continue;
-      const source = audioCtx.createBufferSource();
-      source.buffer = t.buffer;
-      source.connect(t.panner);
-      const within = Math.min(Math.max(offsetSeconds, 0), t.buffer.duration);
-      source.start(0, within);
-      t.source = source;
-    }
-  }
-
-  function stopSources() {
-    for (const t of tracks.values()) {
-      if (t.source) {
-        try { t.source.stop(); } catch (e) { /* already stopped */ }
-        t.source.disconnect();
-        t.source = null;
-      }
-    }
-  }
-
   function startPlayback() {
     if (audioCtx.state === 'suspended') audioCtx.resume();
     if (startOffset >= duration) startOffset = 0;
-    startSourcesAt(startOffset);
-    startCtxTime = audioCtx.currentTime;
+    for (const t of tracks.values()) {
+      if (!t.audioEl) continue;
+      t.audioEl.currentTime = startOffset;
+      t.audioEl.playbackRate = speed;
+      t.audioEl.play();
+    }
     playing = true;
     els.playBtn.textContent = 'Pause';
     tickLoop();
@@ -289,7 +357,9 @@
   function stopPlayback() {
     if (playing) {
       startOffset = getCurrentTime();
-      stopSources();
+      for (const t of tracks.values()) {
+        if (t.audioEl) t.audioEl.pause();
+      }
       playing = false;
     }
     els.playBtn.textContent = 'Play';
@@ -300,16 +370,13 @@
   }
 
   function seekTo(seconds) {
-    const wasPlaying = playing;
-    if (playing) stopSources();
     startOffset = Math.min(Math.max(seconds, 0), duration);
-    startCtxTime = audioCtx.currentTime;
-    if (wasPlaying) {
-      startSourcesAt(startOffset);
-      playing = true;
+    for (const t of tracks.values()) {
+      if (t.audioEl) t.audioEl.currentTime = startOffset;
     }
     updateTimeUI();
     updateCursor();
+    updateTempoUI();
   }
 
   function tickLoop() {
@@ -320,10 +387,12 @@
       startOffset = duration;
       updateTimeUI();
       updateCursor();
+      updateTempoUI();
       return;
     }
     updateTimeUI();
     updateCursor();
+    updateTempoUI();
     rafHandle = requestAnimationFrame(tickLoop);
   }
 
@@ -431,6 +500,16 @@
     seekDragging = false;
   });
 
+  els.speedSlider.addEventListener('input', () => {
+    speed = parseFloat(els.speedSlider.value);
+    updateSpeedUI();
+    // <audio>.playbackRate can change live without resetting currentTime or
+    // needing a restart - and with preservesPitch set, it only changes speed.
+    for (const t of tracks.values()) {
+      if (t.audioEl) t.audioEl.playbackRate = speed;
+    }
+  });
+
   els.viewModeBtn.addEventListener('click', () => {
     layoutMode = layoutMode === 'centered' ? 'book' : 'centered';
     els.viewModeBtn.textContent = layoutMode === 'centered' ? 'Book view' : 'Centered view';
@@ -438,6 +517,15 @@
   });
 
   window.addEventListener('resize', updateCursor);
+
+  if (isFirefox) {
+    els.speedSlider.disabled = true;
+    const tooltip = `Speed control is disabled in Firefox due to a browser bug ` +
+      `that causes audio glitches when playback rate changes on multi-track ` +
+      `audio (${FIREFOX_BUG_URL})`;
+    els.speedSlider.title = tooltip;
+    document.getElementById('speedWrap').title = tooltip;
+  }
 
   (async function init() {
     const list = await loadIndex();
