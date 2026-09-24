@@ -24,6 +24,14 @@ body {
   flex-direction: column;
 }
 
+/* #root (React's mount point, absent from the original static markup this
+   stylesheet was written against) must not generate its own box, or
+   #topbar/#main/#transport below stop being direct flex children of body -
+   #main's `flex: 1` in particular depends on that. */
+#root {
+  display: contents;
+}
+
 /* No wrapping - overflow is handled by layoutTopbar() in app.js stepping
    #topbar through hide-composer/collapse-controls instead, so it reacts to
    actual content width (a long title+composer, a narrow window) rather

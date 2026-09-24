@@ -22,9 +22,10 @@ For each score listed in scores/manifest.json, this:
      that one instrument's Part/Staff data. Verified empirically - three
      parts of the same score came back with distinct checksums and
      distinct volume profiles matching each part's actual note content.)
-  3. Writes everything as static files under dist/scores/<id>/, plus a
-     dist/scores/index.json listing what's available. `npm run build`
-     copies src/ (the site itself) into dist/ before running this.
+  3. Writes everything as static files under public/scores/<id>/, plus a
+     public/scores/index.json listing what's available. Vite's publicDir
+     mechanism serves/copies public/ (including these) alongside the built
+     app in both `npm run dev` and `npm run build`.
 
 Requires on PATH: mscore (MuseScore 4 CLI). Also requires the `mido`
 Python package, used to build a tempo-change map and a per-beat map (with
@@ -48,7 +49,7 @@ import mido
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = ROOT / "scores"
-OUT_DIR = ROOT / "dist" / "scores"
+OUT_DIR = ROOT / "public" / "scores"
 
 # Each part renders via its own `mscore` subprocess, so these run fine in
 # parallel threads (the GIL is released while waiting on the subprocess).

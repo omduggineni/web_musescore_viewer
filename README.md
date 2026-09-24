@@ -2,8 +2,8 @@
 
 A statically-hostable score viewer/player for a pre-specified set of scores.
 Everything is pre-rendered at build time by real MuseScore 4 (no WebAssembly,
-no MuseScore code running in the browser at all) - the site itself is plain
-HTML/CSS/JS reading static files.
+no MuseScore code running in the browser at all) - the site itself is a
+React + TypeScript app, built with Vite, reading static files.
 
 Per score, the viewer shows the engraved page(s) as images with a cursor
 that tracks the beat as it plays, a mixer with independent volume, pan,
@@ -21,17 +21,20 @@ score's actual meter and tempo changes.
 ## Layout
 
 ```
-src/     website source (index.html, style.css, app.js) - checked in
+src/     website source (React/TypeScript components, hooks, style.css) - checked in
+public/  score assets written by tools/prerender.py - NOT checked in (see below)
 scores/  original .mscz files + manifest.json - NOT checked in (see below)
-dist/    build output: src/ + rendered scores - NOT checked in
+dist/    build output: bundled src/ + copied public/ - NOT checked in
 tools/   prerender.py, the build pipeline
 ```
 
-`scores/` and `dist/` are gitignored except for a `.gitkeep` each, so a
+`scores/` and `public/` are gitignored except for a `.gitignore` each, so a
 fresh clone has empty (but present) folders. `scores/` isn't checked in
 because the original score files may be large and/or not something you
-have the right to redistribute; `dist/` isn't checked in because it's
-entirely derived from `src/` + `scores/` via the build.
+have the right to redistribute; `public/` isn't checked in for the same
+reason (it's `prerender.py`'s output, derived from `scores/`); `dist/` isn't
+checked in because it's entirely derived from `src/` + `public/` via the
+Vite build.
 
 ## Building
 
@@ -63,10 +66,12 @@ For each score listed in `scores/manifest.json`, it:
    the player can show the tempo actually in effect at the playhead
    through a rit./accelerando/fermata, not just the score's initial
    marking.
-4. Copies `src/` and writes everything else as static files under
-   `dist/scores/<id>/`: page images, `positions.json` (cursor sync data),
-   `meta.json`, `tempo-map.json`, `score.mid`, and one MP3 per instrument
-   under `tracks/`.
+4. Writes everything else as static files under `public/scores/<id>/`:
+   page images, `positions.json` (cursor sync data), `meta.json`,
+   `tempo-map.json`, `beats.json`, and one MP3 per instrument under
+   `tracks/`. Vite's `publicDir` mechanism then copies `public/` into
+   `dist/` alongside the compiled app on `vite build` (and serves it
+   directly, unbundled, during `npm run dev`).
 
 `dist/` is the deployable site - upload it as-is to any static host
 (GitHub Pages, S3, Cloudflare Pages, ...). No server, no special headers.
@@ -101,6 +106,17 @@ then re-run `npm run build`.
 
 ## Serving locally
 
+For day-to-day frontend work, once `public/scores/` has been populated at
+least once by `python3 tools/prerender.py`:
+
+```sh
+npm run dev
+```
+
+This starts Vite with HMR at `http://localhost:5173/?score=<id>`.
+
+To check the real production build instead:
+
 ```sh
 npm run build
 npm run serve
@@ -117,9 +133,9 @@ slider) has focus, so its own native keyboard handling still works.
 ## Icons
 
 Toolbar icons (metronome, page-layout toggle, zoom in/out, fullscreen,
-mixer toggle) are inlined directly in `index.html` as SVG - copied from
-[Lucide](https://lucide.dev) (ISC license). No icon font or library is
-fetched at runtime.
+mixer toggle) are React components in `src/components/icons.tsx` rendering
+inline SVG - copied from [Lucide](https://lucide.dev) (ISC license). No
+icon font or library is fetched at runtime.
 
 ## License
 

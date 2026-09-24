@@ -4,7 +4,20 @@
   "version": "1.0.0",
   "description": "Statically-hostable, pre-rendered MuseScore score viewer with synced cursor and a per-instrument mixer.",
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && printf '*\\n!.gitignore\\n' > dist/.gitignore && cp -r src/. dist/ && python3 tools/prerender.py",
-    "serve": "python3 -m http.server 8000 --directory dist"
+    "build": "python3 tools/prerender.py && tsc --noEmit && vite build",
+    "dev": "vite",
+    "serve": "python3 -m http.server 8000 --directory dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
   }
 }
