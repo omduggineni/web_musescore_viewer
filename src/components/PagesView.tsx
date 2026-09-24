@@ -141,7 +141,7 @@ export const PagesView = forwardRef<PagesViewHandle, PagesViewProps>(function Pa
           ref={(el) => {
             imgRefs.current[i] = el;
           }}
-          src={loadedPages.has(i) ? `${base}page-${i}.png` : undefined}
+          src={loadedPages.has(i) ? `${base}page-${i}.svg` : undefined}
           alt={`Page ${i + 1}`}
           draggable={false}
           onLoad={(e) => handleImgLoad(e.currentTarget)}

@@ -94,6 +94,7 @@ export function App() {
       <Transport
         playing={player.playing}
         disabled={player.loading}
+        showSpinner={player.loading || player.buffering}
         seekBarRef={player.seekBarRef}
         timeLabelRef={player.timeLabelRef}
         onTogglePlay={player.togglePlay}

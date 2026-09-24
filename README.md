@@ -22,17 +22,17 @@ score's actual meter and tempo changes.
 
 ```
 src/     website source (React/TypeScript components, hooks, style.css) - checked in
-public/  score assets written by tools/prerender.py - NOT checked in (see below)
+public/  score assets written by tools/prerender.mjs - NOT checked in (see below)
 scores/  original .mscz files + manifest.json - NOT checked in (see below)
 dist/    build output: bundled src/ + copied public/ - NOT checked in
-tools/   prerender.py, the build pipeline
+tools/   prerender.mjs, the build pipeline
 ```
 
 `scores/` and `public/` are gitignored except for a `.gitignore` each, so a
 fresh clone has empty (but present) folders. `scores/` isn't checked in
 because the original score files may be large and/or not something you
 have the right to redistribute; `public/` isn't checked in for the same
-reason (it's `prerender.py`'s output, derived from `scores/`); `dist/` isn't
+reason (it's `prerender.mjs`'s output, derived from `scores/`); `dist/` isn't
 checked in because it's entirely derived from `src/` + `public/` via the
 Vite build.
 
@@ -42,7 +42,7 @@ Vite build.
 npm run build
 ```
 
-This runs `tools/prerender.py`, the only thing that knows about MuseScore.
+This runs `tools/prerender.mjs`, the only thing that knows about MuseScore.
 For each score listed in `scores/manifest.json`, it:
 
 1. Runs the real MuseScore 4 desktop CLI (`mscore --score-media`) to get
@@ -62,8 +62,8 @@ For each score listed in `scores/manifest.json`, it:
    instrument's Part/Staff data. Verified empirically - parts of the same
    score come back with distinct checksums and volume profiles matching
    each part's actual note content.)
-3. Builds a tempo map (time -> BPM) from the MIDI export via `mido`, so
-   the player can show the tempo actually in effect at the playhead
+3. Builds a tempo map (time -> BPM) from the MIDI export via `midi-file`,
+   so the player can show the tempo actually in effect at the playhead
    through a rit./accelerando/fermata, not just the score's initial
    marking.
 4. Writes everything else as static files under `public/scores/<id>/`:
@@ -76,14 +76,16 @@ For each score listed in `scores/manifest.json`, it:
 `dist/` is the deployable site - upload it as-is to any static host
 (GitHub Pages, S3, Cloudflare Pages, ...). No server, no special headers.
 
-Requires on `PATH`: `mscore` (MuseScore 4) and the Python `mido` package.
+Requires on `PATH`: `mscore` (MuseScore 4), `ffmpeg`, and Node (`npm install`
+must have been run - `svgo`, used to optimize the exported SVG pages, and
+`midi-file`, used to parse the MIDI export, are both devDependencies).
 
 ### Cursor sync coordinate system
 
 MuseScore's position export (`positionswriter.cpp`) scales coordinates by
 `(exportPngDpiResolution / engraving::DPI) * 12.0`, which is exactly `12.0`
 at the default export DPI (1200) that `--score-media`'s bundled PNGs also
-use. `prerender.py` divides the raw coordinates by 12 so `positions.json`
+use. `prerender.mjs` divides the raw coordinates by 12 so `positions.json`
 is directly in PNG-pixel units - the viewer just scales by
 `displayedWidth / naturalWidth` at render time.
 
@@ -107,7 +109,7 @@ then re-run `npm run build`.
 ## Serving locally
 
 For day-to-day frontend work, once `public/scores/` has been populated at
-least once by `python3 tools/prerender.py`:
+least once by `node tools/prerender.mjs`:
 
 ```sh
 npm run dev

@@ -1,11 +1,12 @@
 import type { RefObject } from 'react';
-import { PlayIcon, PauseIcon } from './icons';
+import { PlayIcon, PauseIcon, LoaderIcon } from './icons';
 import { SeekBar, type SeekBarHandle } from './SeekBar';
 import { TimeLabel, type TimeLabelHandle } from './TimeLabel';
 
 interface TransportProps {
   playing: boolean;
   disabled: boolean;
+  showSpinner: boolean;
   seekBarRef: RefObject<SeekBarHandle>;
   timeLabelRef: RefObject<TimeLabelHandle>;
   onTogglePlay: () => void;
@@ -16,6 +17,7 @@ interface TransportProps {
 export function Transport({
   playing,
   disabled,
+  showSpinner,
   seekBarRef,
   timeLabelRef,
   onTogglePlay,
@@ -27,12 +29,12 @@ export function Transport({
       <button
         id="playBtn"
         className="icon-btn"
-        title={playing ? 'Pause' : 'Play'}
+        title={showSpinner ? 'Loading' : playing ? 'Pause' : 'Play'}
         aria-pressed={playing}
         disabled={disabled}
         onClick={onTogglePlay}
       >
-        {playing ? <PauseIcon /> : <PlayIcon />}
+        {showSpinner ? <LoaderIcon className="spin" /> : playing ? <PauseIcon /> : <PlayIcon />}
       </button>
       <SeekBar ref={seekBarRef} disabled={disabled} onInput={onSeekInput} onChange={onSeekChange} />
       <TimeLabel ref={timeLabelRef} />

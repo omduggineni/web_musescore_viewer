@@ -49,6 +49,7 @@ export function useScorePlayer({ scoreId, mainRef }: UseScorePlayerArgs) {
 
   const [scoreMeta, setScoreMeta] = useState<ScoreMeta | null>(null);
   const [loading, setLoading] = useState(true);
+  const [buffering, setBuffering] = useState(false);
   const [playing, setPlayingState] = useState(false);
   const [duration, setDurationState] = useState(0);
   const [speed, setSpeedState] = useState(1);
@@ -70,6 +71,9 @@ export function useScorePlayer({ scoreId, mainRef }: UseScorePlayerArgs) {
   const metronomeOnRef = useRef(false);
 
   const tracksRef = useRef<Map<string, TrackState>>(new Map());
+  const stallingTracksRef = useRef<Set<string>>(new Set());
+  const pendingStartRef = useRef<Set<string>>(new Set());
+  const pendingStartTimersRef = useRef<Map<string, number>>(new Map());
 
   const playingRef = useRef(false);
   const startOffsetRef = useRef(0);
@@ -324,6 +328,10 @@ export function useScorePlayer({ scoreId, mainRef }: UseScorePlayerArgs) {
         t.audioEl?.pause();
       }
       setPlaying(false);
+      // A manual pause while frozen for buffering should read as just
+      // "paused", not still spin a loading indicator for a fetch nothing
+      // is waiting on anymore.
+      resetStallTracking();
     }
     if (rafHandleRef.current !== null) {
       cancelAnimationFrame(rafHandleRef.current);
@@ -349,15 +357,121 @@ export function useScorePlayer({ scoreId, mainRef }: UseScorePlayerArgs) {
     rafHandleRef.current = requestAnimationFrame(tickLoop);
   }, [getCurrentTime, stopPlayback, updateTimeUI, updateCursor, updateTempoUI]);
 
+  // A track's 'waiting' event means the browser paused *that one* element
+  // for lack of buffered data. Left alone, every other track keeps
+  // playing and drifts ahead of it - the displayed time (driven by
+  // whichever track getClockElement() happens to pick) would keep
+  // advancing even though part of the mix has gone silent. Freeze every
+  // track the instant any of them stalls, and resume them all together
+  // once every stalled track has recovered, so nothing can outrun
+  // anything else and the score only advances when the full ensemble
+  // actually can.
+  //
+  // Every play() call - not just the very first one; a manual pause/resume
+  // re-triggers it too (verified) - fires its own brief, self-resolving
+  // 'waiting' while the decoder re-primes. Freezing on that immediately
+  // pauses every *other* track mid-blip - but pause() on a track whose own
+  // play() hasn't resolved yet aborts that attempt, and its 'playing' then
+  // never fires (verified: this deadlocked every resume, permanently stuck
+  // paused). markPendingStart() below marks a track right as we call
+  // play() on it, and handleTrackWaiting ignores 'waiting' for a track
+  // that's still pending its own start - so the routine blip never
+  // triggers the freeze cascade that kills it. A genuine mid-playback
+  // stall (the track isn't pending - nobody just called play() on it) is
+  // still frozen with zero added delay. The one gap this leaves - a real
+  // stall that happens to coincide exactly with a play() call, which looks
+  // identical to the routine blip from the outside - is caught by
+  // PENDING_START_TIMEOUT_MS as a backstop; it's generous on purpose since
+  // it only matters for that rare coincidence, never for the routine blip
+  // (always resolves in <1ms, confirmed empirically) or for a stall
+  // detected on an already-started track (still instant).
+  const PENDING_START_TIMEOUT_MS = 2000;
+
+  function freezeForStall(trackId: string) {
+    const wasEmpty = stallingTracksRef.current.size === 0;
+    stallingTracksRef.current.add(trackId);
+    if (!wasEmpty) return;
+    // Snap every track to the stalled one's own (frozen) position before
+    // pausing them, so resuming afterwards starts them all perfectly
+    // aligned instead of leaving the healthy ones wherever they'd
+    // wandered to.
+    const freezeAt = tracksRef.current.get(trackId)?.audioEl?.currentTime;
+    for (const t of tracksRef.current.values()) {
+      if (!t.audioEl) continue;
+      t.audioEl.pause();
+      if (freezeAt !== undefined) t.audioEl.currentTime = freezeAt;
+    }
+    if (rafHandleRef.current !== null) {
+      cancelAnimationFrame(rafHandleRef.current);
+      rafHandleRef.current = null;
+    }
+    setBuffering(true);
+    updateTimeUI();
+    updateCursor();
+    updateTempoUI();
+  }
+
+  function markPendingStart(trackId: string) {
+    const existing = pendingStartTimersRef.current.get(trackId);
+    if (existing !== undefined) clearTimeout(existing);
+    pendingStartRef.current.add(trackId);
+    pendingStartTimersRef.current.set(
+      trackId,
+      window.setTimeout(() => {
+        pendingStartTimersRef.current.delete(trackId);
+        if (!pendingStartRef.current.delete(trackId)) return;
+        if (!playingRef.current) return;
+        freezeForStall(trackId);
+      }, PENDING_START_TIMEOUT_MS),
+    );
+  }
+
+  function clearPendingStart(trackId: string) {
+    const timer = pendingStartTimersRef.current.get(trackId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      pendingStartTimersRef.current.delete(trackId);
+    }
+    pendingStartRef.current.delete(trackId);
+  }
+
+  function resetStallTracking() {
+    stallingTracksRef.current.clear();
+    for (const timer of pendingStartTimersRef.current.values()) clearTimeout(timer);
+    pendingStartTimersRef.current.clear();
+    pendingStartRef.current.clear();
+    setBuffering(false);
+  }
+
+  const handleTrackWaiting = useCallback((trackId: string) => {
+    if (!playingRef.current) return;
+    if (pendingStartRef.current.has(trackId)) return;
+    freezeForStall(trackId);
+  }, []);
+
+  const handleTrackRecovered = useCallback((trackId: string) => {
+    clearPendingStart(trackId);
+    if (!stallingTracksRef.current.delete(trackId)) return;
+    if (stallingTracksRef.current.size > 0 || !playingRef.current) return;
+    setBuffering(false);
+    for (const [id, t] of tracksRef.current.entries()) {
+      markPendingStart(id);
+      t.audioEl?.play().catch(() => {});
+    }
+    tickLoop();
+  }, [tickLoop]);
+
   const startPlayback = useCallback(() => {
     const ctx = audioCtxRef.current;
     if (!ctx) return;
     if (ctx.state === 'suspended') ctx.resume();
+    resetStallTracking();
     if (startOffsetRef.current >= durationRef.current) startOffsetRef.current = 0;
-    for (const t of tracksRef.current.values()) {
+    for (const [id, t] of tracksRef.current.entries()) {
       if (!t.audioEl) continue;
       t.audioEl.currentTime = startOffsetRef.current;
       t.audioEl.playbackRate = speedRef.current;
+      markPendingStart(id);
       // A play() request can be interrupted by a pause() before it resolves
       // (e.g. rapid space/arrow-key presses) - expected, not a bug; swallow
       // the resulting rejection so it doesn't spam the console.
@@ -378,6 +492,18 @@ export function useScorePlayer({ scoreId, mainRef }: UseScorePlayerArgs) {
   const seekTo = useCallback(
     (seconds: number, forceScroll = false) => {
       startOffsetRef.current = Math.min(Math.max(seconds, 0), durationRef.current);
+      // Seeking a *playing* element makes the browser briefly pause-then-
+      // auto-resume it on its own, firing the same 'waiting'/'playing'
+      // pair as any other play() - without markPendingStart here,
+      // handleTrackWaiting treats that as a real stall and pauses every
+      // track, which cancels the browser's in-flight auto-resume before
+      // its 'playing' ever fires. Net effect (verified): seeking during
+      // playback froze the score permanently. Only relevant while
+      // actually playing - a paused element doesn't auto-resume from a
+      // seek, so there's nothing to guard while stopped.
+      if (playingRef.current) {
+        for (const id of tracksRef.current.keys()) markPendingStart(id);
+      }
       for (const t of tracksRef.current.values()) {
         if (t.audioEl) t.audioEl.currentTime = startOffsetRef.current;
       }
@@ -572,6 +698,7 @@ export function useScorePlayer({ scoreId, mainRef }: UseScorePlayerArgs) {
     (async () => {
       stopPlayback();
       tracksRef.current.clear();
+      resetStallTracking();
       setTrackList([]);
       setLoading(true);
       lastCursorKeyRef.current = null;
@@ -629,10 +756,19 @@ export function useScorePlayer({ scoreId, mainRef }: UseScorePlayerArgs) {
                 const audioEl = new Audio();
                 audioEl.preload = 'auto';
                 setPreservesPitch(audioEl, true);
-                audioEl.addEventListener('canplaythrough', () => resolve(), { once: true });
+                // 'canplay' (enough buffered to start) rather than
+                // 'canplaythrough' (browser estimates the *whole* file will
+                // arrive without stalling) - the latter effectively waits
+                // for a full download on anything but a very fast
+                // connection, even though these files are served with
+                // range-request support and keep streaming in via
+                // preload='auto' once playback starts.
+                audioEl.addEventListener('canplay', () => resolve(), { once: true });
                 audioEl.addEventListener('error', () => reject(new Error(`failed to load ${tm.file}`)), {
                   once: true,
                 });
+                audioEl.addEventListener('waiting', () => handleTrackWaiting(tm.id));
+                audioEl.addEventListener('playing', () => handleTrackRecovered(tm.id));
                 audioEl.src = base + tm.file;
                 t.audioEl = audioEl;
 
@@ -679,6 +815,7 @@ export function useScorePlayer({ scoreId, mainRef }: UseScorePlayerArgs) {
 
     scoreMeta,
     loading,
+    buffering,
     playing,
     duration,
     speed,
