@@ -6,6 +6,7 @@
     title: document.getElementById('scoreTitle'),
     composer: document.getElementById('scoreComposer'),
     menuBtn: document.getElementById('menuBtn'),
+    menuIcon: document.getElementById('menuIcon'),
     rightControls: document.getElementById('rightControls'),
     tempoBtn: document.getElementById('tempoBtn'),
     tempoPanel: document.getElementById('tempoPanel'),
@@ -19,8 +20,10 @@
     zoomInBtn: document.getElementById('zoomInBtn'),
     fullscreenBtn: document.getElementById('fullscreenBtn'),
     fullscreenIcon: document.getElementById('fullscreenIcon'),
+    main: document.getElementById('main'),
     mixer: document.getElementById('mixer'),
     mixerToggleBtn: document.getElementById('mixerToggleBtn'),
+    mixerCloseBtn: document.getElementById('mixerCloseBtn'),
     pagesWrap: document.getElementById('pagesWrap'),
     pages: document.getElementById('pages'),
     channels: document.getElementById('channels'),
@@ -42,6 +45,8 @@
   const PAUSE_ICON = '<rect x="14" y="3" width="5" height="18" rx="1" /><rect x="5" y="3" width="5" height="18" rx="1" />';
   const MAXIMIZE_ICON = '<path d="M8 3H5a2 2 0 0 0-2 2v3" /><path d="M21 8V5a2 2 0 0 0-2-2h-3" /><path d="M3 16v3a2 2 0 0 0 2 2h3" /><path d="M16 21h3a2 2 0 0 0 2-2v-3" />';
   const MINIMIZE_ICON = '<path d="M8 3v3a2 2 0 0 1-2 2H3" /><path d="M21 8h-3a2 2 0 0 1-2-2V3" /><path d="M3 16h3a2 2 0 0 1 2 2v3" /><path d="M16 21v-3a2 2 0 0 1 2-2h3" />';
+  const MENU_ICON = '<path d="M4 5h16" /><path d="M4 12h16" /><path d="M4 19h16" />';
+  const X_ICON = '<path d="M18 6 6 18" /><path d="m6 6 12 12" />';
 
   /** @type {AudioContext|null} */
   let audioCtx = null;
@@ -56,7 +61,10 @@
   let beatMap = [];          // [{time (sec), downbeat}, ...] sorted by time
   let nextBeatIndex = 0;     // metronome scheduler's position in beatMap
   let metronomeOn = false;
-  let mixerOpen = true;
+  // Sidebar on desktop defaults open; fullscreen dialog on mobile (see the
+  // 700px breakpoint in style.css) defaults closed, since it would
+  // otherwise cover the just-loaded score immediately.
+  let mixerOpen = !window.matchMedia('(max-width: 700px)').matches;
   let zoomLevel = 1;
   let pageEls = [];          // [{el, img, cursorEl}]
   /** @type {IntersectionObserver|null} */
@@ -564,6 +572,15 @@
 
   let lastCursorKey = null; // `${page}:${y}` of the staff line last scrolled to
 
+  // The element that actually scrolls the score into view: #pagesWrap on
+  // desktop, but below 700px #pagesWrap/#mixer share one scroll region on
+  // #main instead (see the mobile media query in style.css) - detected via
+  // computed overflow rather than duplicating that breakpoint here, so the
+  // two stay in sync automatically if either one changes.
+  function scrollHost() {
+    return getComputedStyle(els.pagesWrap).overflowY === 'visible' ? els.main : els.pagesWrap;
+  }
+
   // The (deltaY, deltaX) to scroll by so `cursorRect` becomes visible:
   // centered in a dimension where it fits, or - when it's bigger than the
   // viewport in that dimension - aligned to the near edge so as much as
@@ -630,10 +647,11 @@
     cursorRect.bottom = cursorRect.top + cursorRect.height;
     cursorRect.right = cursorRect.left + cursorRect.width;
 
-    const wrapRect = els.pagesWrap.getBoundingClientRect();
+    const host = scrollHost();
+    const wrapRect = host.getBoundingClientRect();
     const { deltaY, deltaX } = cursorScrollDelta(cursorRect, wrapRect);
     if (Math.abs(deltaY) > 1 || Math.abs(deltaX) > 1) {
-      els.pagesWrap.scrollBy({ top: deltaY, left: deltaX, behavior: 'smooth' });
+      host.scrollBy({ top: deltaY, left: deltaX, behavior: 'smooth' });
     }
   }
 
@@ -678,7 +696,8 @@
   // as native PageUp/PageDown, so it scrolls by however much is actually
   // visible rather than jumping to a specific page element.
   function stepPage(direction) {
-    els.pagesWrap.scrollBy({ top: direction * els.pagesWrap.clientHeight, behavior: 'smooth' });
+    const host = scrollHost();
+    host.scrollBy({ top: direction * host.clientHeight, behavior: 'smooth' });
   }
 
   // ---------- Wiring ----------
@@ -723,11 +742,21 @@
   els.viewBookBtn.addEventListener('click', () => setViewMode('book'));
   setViewMode(layoutMode);
 
+  // Book mode can only be entered while the view toggle is visible (above
+  // 700px - see style.css), but shrinking the window afterward doesn't
+  // re-run that choice on its own, so a resize down past that point needs
+  // to fall back to centered explicitly.
+  window.addEventListener('resize', () => {
+    if (layoutMode === 'book' && window.matchMedia('(max-width: 700px)').matches) {
+      setViewMode('centered');
+    }
+  });
+
   // Keeps the same relative scroll position across a zoom change (as a
   // fraction of the total scrollable distance in each direction), so
   // zooming in/out doesn't jump to an earlier/later page.
   function setZoom(level) {
-    const wrap = els.pagesWrap;
+    const wrap = scrollHost();
     const oldScrollableY = wrap.scrollHeight - wrap.clientHeight;
     const oldScrollableX = wrap.scrollWidth - wrap.clientWidth;
     const fracY = oldScrollableY > 0 ? wrap.scrollTop / oldScrollableY : 0;
@@ -774,6 +803,7 @@
   }
 
   els.mixerToggleBtn.addEventListener('click', () => setMixerOpen(!mixerOpen));
+  els.mixerCloseBtn.addEventListener('click', () => setMixerOpen(false));
   setMixerOpen(mixerOpen);
 
   // Click-to-open dropdowns: the tempo/speed panel, and (below 700px,
@@ -781,10 +811,11 @@
   // normal always-visible desktop layout) the menu holding every other
   // control. Returns a setter so all open dropdowns can be closed
   // together (click-outside, Escape).
-  function makeDropdown(btn, panel) {
+  function makeDropdown(btn, panel, onChange) {
     function setOpen(open) {
       panel.hidden = !open;
       btn.setAttribute('aria-expanded', String(open));
+      if (onChange) onChange(open);
     }
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -795,7 +826,11 @@
   }
 
   const setTempoPanelOpen = makeDropdown(els.tempoBtn, els.tempoPanel);
-  const setMenuOpen = makeDropdown(els.menuBtn, els.rightControls);
+  // The menu button becomes a close ("x") icon while its drawer is open,
+  // rather than staying a hamburger the whole time.
+  const setMenuOpen = makeDropdown(els.menuBtn, els.rightControls, (open) => {
+    els.menuIcon.innerHTML = open ? X_ICON : MENU_ICON;
+  });
 
   document.addEventListener('click', () => {
     setTempoPanelOpen(false);

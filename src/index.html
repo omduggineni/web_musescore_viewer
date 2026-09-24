@@ -19,8 +19,10 @@
          Above that width the button is hidden and #rightControls is
          forced always-visible, unstyled, inline (today's desktop look). -->
     <button id="menuBtn" type="button" class="icon-btn" title="More controls" aria-haspopup="true" aria-expanded="false">
-      <!-- Lucide "menu" icon - https://lucide.dev/icons/menu (ISC license) -->
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <!-- Lucide "menu" icon - https://lucide.dev/icons/menu (ISC license);
+           swapped for "x" (https://lucide.dev/icons/x, also ISC) while the
+           drawer is open - app.js -->
+      <svg id="menuIcon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M4 5h16" />
         <path d="M4 12h16" />
         <path d="M4 19h16" />
@@ -116,7 +118,20 @@
     </section>
 
     <aside id="mixer">
-      <h2>Mixer</h2>
+      <div id="mixerHeader">
+        <h2>Mixer</h2>
+        <!-- Below 700px the mixer becomes a fullscreen dialog instead of a
+             sidebar (see style.css) - this close button is only shown
+             there, since the toggle button in the topbar is off-screen
+             once the dialog covers everything. -->
+        <button id="mixerCloseBtn" type="button" class="icon-btn" title="Close mixer">
+          <!-- Lucide "x" icon - https://lucide.dev/icons/x (ISC license) -->
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
       <div id="channels"></div>
     </aside>
   </main>

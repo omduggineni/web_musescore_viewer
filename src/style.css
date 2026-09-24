@@ -344,12 +344,26 @@ body {
   overflow-y: auto;
 }
 
+#mixerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 0.8rem;
+}
+
 #mixer h2 {
   font-size: 0.95rem;
-  margin: 0 0 0.8rem;
+  margin: 0;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* The mixer dialog's own close button - shown only below 700px (see media
+   query), since on desktop the always-visible toggle button in the topbar
+   already does the same job. */
+#mixerCloseBtn {
+  display: none;
 }
 
 .channel {
@@ -444,10 +458,10 @@ body {
     display: none;
   }
 
-  /* One shared scroll region for the score pages + mixer stacked
-     together, same as the single #pagesWrap/#mixer scroll each already
-     gets on desktop - instead of each having its own separate (and
-     glitchy) internal scrollbar while nested in a fixed-height column. */
+  /* #main becomes the score's own single scroll region (no separate,
+     glitchy internal scrollbar on #pagesWrap while nested in a
+     fixed-height column) - the mixer is no longer part of this flow at
+     all below, it's a fullscreen dialog instead. */
   #main {
     flex-direction: column;
     overflow-y: auto;
@@ -458,12 +472,33 @@ body {
     overflow: visible;
   }
 
+  /* Fullscreen dialog instead of a sidebar after the score - closed via
+     #mixerCloseBtn (shown only here) or the topbar's toggle button. */
   #mixer {
-    flex: none;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
     width: auto;
-    border-left: none;
-    border-top: 1px solid var(--border);
-    overflow: visible;
+    border: none;
+    padding: 0;
+    overflow-y: auto;
+  }
+
+  /* Same padding/border as #topbar, so the close button lands exactly
+     where the menu icon does there - the content area (#channels) gets
+     its own padding back below instead. */
+  #mixerHeader {
+    margin: 0;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #channels {
+    padding: 1rem;
+  }
+
+  #mixerCloseBtn {
+    display: inline-flex;
   }
 
   #topbar {
